@@ -59,6 +59,7 @@ cover/
 # Translations
 *.mo
 *.pot
+*.zip
 
 # Django stuff:
 *.log
@@ -141,6 +142,7 @@ py38/
 
 # Rope project settings
 .ropeproject
+.gitignore
 
 # mkdocs documentation
 /site
@@ -161,7 +163,8 @@ cython_debug/
 
 # third library
 utils/
-
+tensorboard/
+models/
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

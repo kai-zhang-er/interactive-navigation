@@ -3,20 +3,44 @@ import pybullet as p
 import matplotlib.pyplot as plt
 import math
 
-from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, WorldSaver, get_link_state, quat_from_euler, ray_from_pixel, \
+from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, WorldSaver, get_link_state, plan_joint_motion, ray_from_pixel, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
-         Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat
+         Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, get_body_name
 from utils.pybullet_tools.pr2_problems import create_pr2
 from utils.pybullet_tools.pr2_utils import set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
-        get_base_pose, set_joint_positions
+        get_base_pose, set_joint_positions, get_disabled_collisions
 
+
+def test_drake_base_motion(pr2, base_start, base_goal, obstacles=[]):
+    # TODO: combine this with test_arm_motion
+    """
+    Drake's PR2 URDF has explicit base joints
+    """
+    disabled_collisions = get_disabled_collisions(pr2)
+    base_joints = [joint_from_name(pr2, name) for name in PR2_GROUPS['base']]
+    set_joint_positions(pr2, base_joints, base_start)
+    base_joints = base_joints[:2]
+    base_goal = base_goal[:len(base_joints)]
+    # wait_if_gui('Plan Base?')
+    with LockRenderer(lock=False):
+        base_path = plan_joint_motion(pr2, base_joints, base_goal, obstacles=obstacles,
+                                      disabled_collisions=disabled_collisions)
+    if base_path is None:
+        # print('Unable to find a base path')
+        return False
+    # print(len(base_path))
+    # print("------------{}".format(base_path[0]))
+    # for bq in base_path:
+    #     set_joint_positions(pr2, base_joints, bq)
+        # wait_for_duration(0.01)
+    return True
 
 def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     room_size = 4.0
     base_limits = (np.array([-6,-2]),np.array([6,2]))
     corrido_w= 4.0
-    mound_height = 0.2
+    mound_height = 0.3
 
     # two room and a corridor
     floor = create_box(room_size*2+corrido_w, room_size, 0.001, color=TAN) 
@@ -24,12 +48,10 @@ def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     # horrizon walls
     wall1 = create_box(room_size*2+corrido_w + mound_height, mound_height, mound_height, color=GREY)
     set_point(wall1, Point(y=-room_size/2, z=mound_height/2.))
-    wall2 = create_box(room_size + mound_height, mound_height, mound_height, color=GREY)
-    set_point(wall2, Point(x=-4, y=room_size/2., z=mound_height/2.))
-    wall3 = create_box(room_size + mound_height, mound_height, mound_height, color=GREY)
-    set_point(wall3, Point(x=4.,y=room_size/2., z=mound_height/2.))
-    wall4 = create_box(room_size + mound_height, mound_height, mound_height, color=GREY)
-    set_point(wall4, Point(z=mound_height/2.))
+    wall2 = create_box(room_size*2+corrido_w + mound_height, mound_height, mound_height, color=GREY)
+    set_point(wall2, Point(y=room_size/2, z=mound_height/2.))
+    wall4 = create_box(corrido_w , 2, mound_height, color=GREY)
+    set_point(wall4, Point(x=0.0, y=1, z=mound_height/2.))
     # vertical walls
     wall5 = create_box(mound_height, room_size + mound_height, mound_height, color=GREY)
     set_point(wall5, Point(x=-6., z=mound_height/2.))
@@ -43,7 +65,7 @@ def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     robots = []
     for i in range(n_rovers):
         robot = create_pr2()
-        dump_body(robot) # camera_rgb_optical_frame
+        # dump_body(robot) # camera_rgb_optical_frame
         robots.append(robot)
         set_group_conf(robot, 'base', rover_confs[i]) #set the position
         for arm in ARM_NAMES:
@@ -58,10 +80,10 @@ def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     cylinder_radius = 0.25
     cylinder_height=1
     body1 = create_cylinder(cylinder_radius, cylinder_height, color=RED)
-    set_point(body1, Point(x=-3.3,y=-1., z=0.))
-    body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
-    set_point(body2, Point(x=3.,y=1., z=0.))
-    movable = [body1, body2]
+    set_point(body1, Point(x=3,y=1., z=0.))
+    # body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
+    # set_point(body2, Point(x=3.,y=1., z=0.))
+    movable = [body1]
     #goal_holding = {robots[0]: body1}
     goal_holding = {}
     return robots, movable 
@@ -129,8 +151,9 @@ def get_ray_info_around_robot(robot_id):
     
 
 def get_ray_info_around_point(ray_from_pos):
+    ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
     total_rays=24
-    ray_length=1.0
+    ray_length=1
     angle_interval=2*math.pi/total_rays
     ray_from_pos_array=np.repeat(ray_from_pos, total_rays, axis=0)
     ray_to_pos_array=ray_from_pos_array.copy()
@@ -142,17 +165,21 @@ def get_ray_info_around_point(ray_from_pos):
 
     result_list=[]
     for r in ray_results:
-        result_list.append([r[0],r[1],r[2]])
+        distance=1000
+        if r[0] > 0: # hit something, 0 is floor
+            distance=np.linalg.norm(ray_from_pos-r[3])
+        result_list.append([r[0],r[1],distance])
     return np.array(result_list,dtype=np.float32)
 
 
 def test_collide(ray_from_pos):
+    ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
     ray_results=get_ray_info_around_point(ray_from_pos)
     min_dist=1
     for r in ray_results:
-        if r[0] !=-1 : # hit object id
+        if r[0] > 0 : # hit object id
             min_dist= r[2] if r[2]<min_dist else min_dist
-    if min_dist<0.5: # distance threshold, smaller=>collide
+    if min_dist<0.3: # distance threshold, smaller=>collide
         return True
     return False
 
@@ -160,22 +187,30 @@ def update_robot_base(robot_id, base_pos):
     base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]
     set_joint_positions(robot_id, base_joints, base_pos)
 
-def render_env():
-    simid=connect(use_gui=True)
+def render_env(use_gui=True):
+    simid=connect(use_gui=use_gui)
     set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
 
     with HideOutput():
         robots, movable=create_env()
 
-    images=get_front_image_from_robot(robots[0])
+    # images=get_front_image_from_robot(robots[0])
     # plt.figure()
     # plt.imshow(images[0])
     # plt.show()
     # set_point(movable[0], Point(x=-2.,y=1., z=0.))
-    ray_results=get_ray_info_around_robot(robots[0])
+    # ray_results=get_ray_info_around_robot(robots[0])
+    # print(test_collide(np.array([[-5.0,-1.5,0.]])))
+    # print(get_body_name(0))
+    # print(test_drake_base_motion(robots[0],np.array([-4.0,-2., 0.]), np.array([4.,1.,0.])))
     
+    test_ray()
     wait_for_user()
     disconnect()
 
+def test_ray():
+    ray=p.rayTest(np.array([-4.0,-1.9, 0.]), np.array([0.,-2.1,0.]))
+    print(ray[0][0]>0)
 if __name__=="__main__":
-    render_env()
+    render_env(use_gui=True)
+    
