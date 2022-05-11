@@ -43,8 +43,8 @@ def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     mound_height = 0.3
 
     # two room and a corridor
-    floor = create_box(room_size*2+corrido_w, room_size, 0.001, color=TAN) 
-    set_point(floor, Point(z=-0.001/2.))
+    # floor = create_box(room_size*2+corrido_w, room_size, 0.001, color=TAN) 
+    # set_point(floor, Point(z=-0.001/2.))
     # horrizon walls
     wall1 = create_box(room_size*2+corrido_w + mound_height, mound_height, mound_height, color=GREY)
     set_point(wall1, Point(y=-room_size/2, z=mound_height/2.))
@@ -166,7 +166,7 @@ def get_ray_info_around_point(ray_from_pos):
     result_list=[]
     for r in ray_results:
         distance=1000
-        if r[0] > 0: # hit something, 0 is floor
+        if r[0] > -1: # hit something, 0 is floor
             distance=np.linalg.norm(ray_from_pos-r[3])
         result_list.append([r[0],r[1],distance])
     return np.array(result_list,dtype=np.float32)
@@ -177,11 +177,13 @@ def test_collide(ray_from_pos):
     ray_results=get_ray_info_around_point(ray_from_pos)
     min_dist=1
     for r in ray_results:
-        if r[0] > 0 : # hit object id
+        if r[0] > -1 : # hit object id
             min_dist= r[2] if r[2]<min_dist else min_dist
     if min_dist<0.3: # distance threshold, smaller=>collide
         return True
     return False
+
+
 
 def update_robot_base(robot_id, base_pos):
     base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]

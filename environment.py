@@ -29,7 +29,7 @@ class NAMOENV(gym.Env):
         self.base_limit=base_limit
         self.T_dis=distance_threshold
 
-        self.reward_dict={"collision":-3, "done":3, "distance_reward":-1}
+        self.reward_dict={"collision":-3, "done":10, "distance_reward":-1}
 
         # actions for base
         self.action_space=spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
@@ -54,7 +54,7 @@ class NAMOENV(gym.Env):
 
     def step(self, action):
 
-        reward=0
+        reward=0.0
         if len(action)==2:
             sub_goal=self.robot_pos[:]+np.array([action[0],action[1],0],dtype=np.float32)
             # if test_drake_base_motion(self.robots[0], self.robot_pos, base_goal):
@@ -63,16 +63,16 @@ class NAMOENV(gym.Env):
             ray=p.rayTest(self.robot_pos, sub_goal)
             if ray[0][0]<0: #not collision
                 self.robot_pos[:]=sub_goal
-                # reward+=0.2  # finish the subgoal
-
+                reward+=0.2  # finish the subgoal
         else:
             raise ValueError("Received invalid action={}".format(action))
         
         done=False
         # collision reward
+        # binary reward 
         # if test_collide([self.robot_pos]):
         #     reward+=self.reward_dict["collision"]
-        
+
         # success reward
         distance=np.linalg.norm(self.robot_pos-self.goal_pos)
         
@@ -82,12 +82,16 @@ class NAMOENV(gym.Env):
             # self.reward_list=[0]
 
         # distance reward
-        self.reward_dict["distance"]=-distance/self.whole_distance
+        self.reward_dict["distance"]=-distance
         reward=reward+self.reward_dict["distance"]
 
         info={"robot_pos":self.robot_pos}
         ray_results_array=get_ray_info_around_point([self.robot_pos])
         observation=ray_results_array[:,2]
+        # collision distance reward
+        min_distance=observation.min()+0.0001
+        collision_reward= self.reward_dict["collision"] if min_distance<self.T_dis else -1.0/min_distance
+        reward+=collision_reward
 
         # self.reward_list.append(reward)
         # mean_reward=sum(self.reward_list)/len(self.reward_list)
@@ -95,7 +99,7 @@ class NAMOENV(gym.Env):
 
     def render(self):
         update_robot_base(self.robots[0], self.robot_pos)
-        # wait_for_duration(0.1)
+        wait_for_duration(0.05)
 
     def close(self):
         disconnect()

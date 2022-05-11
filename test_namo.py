@@ -3,9 +3,9 @@ from stable_baselines3 import A2C, PPO, SAC
 from environment import NAMOENV
 
 
-env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=True)
+env=NAMOENV(init_pos=[-4,-1,0], goal_pos=[4,-1,0], use_gui=True)
 
-model=PPO.load("models/ppo_navigation")
+model=PPO.load("models/ppo_navigation10000")
 
 num_episodes=5
 max_steps=1000
