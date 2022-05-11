@@ -3,13 +3,26 @@ import pybullet as p
 import matplotlib.pyplot as plt
 import math
 
-from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, WorldSaver, get_link_state, plan_joint_motion, ray_from_pixel, \
+from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_link_state, plan_joint_motion, ray_from_pixel, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
-         Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, get_body_name
+    Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
+        joints_from_names, get_joint_positions
 from utils.pybullet_tools.pr2_problems import create_pr2
 from utils.pybullet_tools.pr2_utils import set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
         get_base_pose, set_joint_positions, get_disabled_collisions
+
+
+TURTLE_BASE_JOINTS = ['x', 'y', 'theta']
+
+def get_base_joints(robot):
+    return joints_from_names(robot, TURTLE_BASE_JOINTS)
+
+def get_base_conf(robot):
+    return get_joint_positions(robot, get_base_joints(robot))
+
+def set_base_conf(robot, conf):
+    set_joint_positions(robot, get_base_joints(robot), conf)
 
 
 def test_drake_base_motion(pr2, base_start, base_goal, obstacles=[]):
@@ -36,7 +49,8 @@ def test_drake_base_motion(pr2, base_start, base_goal, obstacles=[]):
         # wait_for_duration(0.01)
     return True
 
-def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
+def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1, 
+                rover_confs=[(+1, -1.75, np.pi)]):
     room_size = 4.0
     base_limits = (np.array([-6,-2]),np.array([6,2]))
     corrido_w= 4.0
@@ -63,31 +77,57 @@ def create_env(rover_confs = [(-4, -1, 0),(4,1,0)], n_rovers=1):
     set_point(wall8, Point(x=2.,y=1, z=mound_height/2.))
 
     robots = []
-    for i in range(n_rovers):
+    for i in range(n_robots):
         robot = create_pr2()
         # dump_body(robot) # camera_rgb_optical_frame
         robots.append(robot)
-        set_group_conf(robot, 'base', rover_confs[i]) #set the position
+        set_group_conf(robot, 'base', robot_confs[i]) #set the position
         for arm in ARM_NAMES:
             set_arm_conf(robot, arm, arm_conf(arm, REST_LEFT_ARM))
             close_arm(robot, arm)
      
+    rovers=add_mobile_obstacles(num=n_rovers, rover_confs=rover_confs)
 
-    goal_confs = {robots[0]: rover_confs[-1]}
+    goal_confs = {robots[0]: robot_confs[-1]}
     #goal_confs = {}
 
     # TODO: make the objects smaller
     cylinder_radius = 0.25
     cylinder_height=1
     body1 = create_cylinder(cylinder_radius, cylinder_height, color=RED)
-    set_point(body1, Point(x=3,y=1., z=0.))
+    set_point(body1, Point(x=3,y=-1., z=0.))
     # body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
     # set_point(body2, Point(x=3.,y=1., z=0.))
     movable = [body1]
     #goal_holding = {robots[0]: body1}
     goal_holding = {}
-    return robots, movable 
+    return robots, movable, rovers
 
+
+def add_mobile_obstacles(num=1, rover_confs=[(+1, -1.75, np.pi)]):
+    """add mobile obstacles
+
+    Args:
+        num (int, optional): number of obstacles to add. Defaults to 1.
+        rover_confs (list, optional): (x, y, theta) position and orientation of obstacle
+    
+    return:
+        a list of obstacles
+    """
+    assert num == len(rover_confs)
+    rovers_list=[]
+    for i in range(num):
+        with HideOutput():
+            rover = load_model(TURTLEBOT_URDF)
+        set_point(rover, Point(z=0.))
+        set_base_conf(rover, rover_confs[i])
+        rovers_list.append(rover)
+    return rovers_list
+
+def get_pr2_yaw(robot_id):
+    pose=get_base_pose(robot_id)
+    _,_,yaw=euler_from_quat(pose[1])
+    return yaw
 
 def get_front_image_from_robot(robot_id):
     """get images from front camera
@@ -184,17 +224,25 @@ def test_collide(ray_from_pos):
     return False
 
 
+def update_robot_base(robot_id, base_conf):
+    """update the configuration of base joints
 
-def update_robot_base(robot_id, base_pos):
-    base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]
-    set_joint_positions(robot_id, base_joints, base_pos)
+    Args:
+        robot_id (_type_): robot id
+        base_conf (_type_): (x,y,yaw))
+    """
+    set_group_conf(robot_id, 'base', base_conf)
+
+def update_rover_base(rover_id, base_pos):
+    base_conf=(base_pos[0][0], base_pos[0][1], np.pi)
+    set_base_conf(rover_id, base_conf)
 
 def render_env(use_gui=True):
     simid=connect(use_gui=use_gui)
     set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
 
     with HideOutput():
-        robots, movable=create_env()
+        robots, movable, mobiles=create_env()
 
     # images=get_front_image_from_robot(robots[0])
     # plt.figure()
@@ -206,7 +254,10 @@ def render_env(use_gui=True):
     # print(get_body_name(0))
     # print(test_drake_base_motion(robots[0],np.array([-4.0,-2., 0.]), np.array([4.,1.,0.])))
     
-    test_ray()
+    # test_ray()
+    # get_pr2_yaw(robots[0])
+
+    update_robot_base(robots[0], base_conf=(4,1,np.pi))
     wait_for_user()
     disconnect()
 
