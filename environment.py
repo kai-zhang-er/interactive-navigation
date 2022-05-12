@@ -78,7 +78,8 @@ class NAMOENV(gym.Env):
             if ray[0][0]<0: #not collision
                 self.robot_pos[:]=sub_goal
                 self.pr2_yaw+=va
-                reward+=0.2  # finish the subgoal
+                # reward+=0.2  # finish the subgoal
+
         else:
             raise ValueError("Received invalid action={}".format(action))
         
@@ -97,7 +98,7 @@ class NAMOENV(gym.Env):
             # self.reward_list=[0]
 
         # distance reward
-        self.reward_dict["distance"]=-distance
+        self.reward_dict["distance"]=1/distance
         reward=reward+self.reward_dict["distance"]
 
         info={"robot_pos":self.robot_pos}

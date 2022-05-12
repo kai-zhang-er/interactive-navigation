@@ -4,12 +4,12 @@ from environment import NAMOENV
 from utils.pybullet_tools.utils import wait_for_duration, wait_for_user
 
 
-env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=False)
+env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=False)
 # env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=True)
 
-model=PPO.load("models/ppo_nav_ang_10000")
+model=PPO.load("models/ppo_nav_ang_80000_nosub")
 
-num_episodes=5
+num_episodes=30
 finish_steps=[]
 success_rate=0
 max_steps=1000
