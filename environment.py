@@ -5,7 +5,7 @@ import gym
 from gym import spaces
 import pybullet as p
 from env import create_env, test_collide, get_ray_info_around_point, \
-    update_robot_base, get_pr2_yaw, update_rover_base
+    update_robot_base, get_pr2_yaw, update_rover_base, update_movable_obstacle_point
 from utils.pybullet_tools.utils import connect, disconnect, set_camera_pose, \
     wait_for_user, HideOutput, wait_for_duration, set_point, Point
 
@@ -34,8 +34,12 @@ class NAMOENV(gym.Env):
 
         self.reward_dict={"collision":-3, "done":40, "distance_reward":-1}
 
-        # actions for base
-        self.action_space=spaces.Box(low=np.array([-1,-np.pi/3.0]), high=np.array([1,np.pi/3.0]), shape=(2,), dtype=np.float32)
+        self.current_step=0
+        self.max_steps_per_episode=1000
+
+        # actions for base and arm
+        # linear velocity, angular velocity, arm angle limit, arm length limit
+        self.action_space=spaces.Box(low=np.array([-1,-np.pi/3.0, -np.pi/2.0, 0.3]), high=np.array([1,np.pi/3.0, np.pi/2.0, 1]), shape=(4,), dtype=np.float32)
 
         # observation space
         self.observation_space=spaces.Box(low=0, high=1, shape=(num_rays,), dtype=np.float32)
@@ -47,12 +51,16 @@ class NAMOENV(gym.Env):
             robot_confs=[self.init_pos, self.goal_pos]
             rover_confs=[(+3, 1, np.pi)]
             self.rover_pos=[[rover_confs[0][0],rover_confs[0][1],0.]]
-            self.robots, self.movable, self.rovers=create_env(robot_confs=robot_confs, rover_confs=rover_confs)
+            self.robots, self.movable, self.rovers, self.statics=create_env(robot_confs=robot_confs, rover_confs=rover_confs)
 
         self.pr2_yaw=get_pr2_yaw(self.robots[0])
         self.reward_list=[]
 
     def reset(self):
+        self.current_step=0
+        # reset obstacles to initial position
+        set_point(self.movable[0], Point(x=-2,y=-0.5, z=0.))
+        set_point(self.movable[1], Point(-2,y=-1.5, z=0.))
         # reset the robot to initial position
         self.robot_pos[:]=self.init_pos # assign value 
         ray_results_array=get_ray_info_around_point([self.robot_pos])
@@ -64,8 +72,8 @@ class NAMOENV(gym.Env):
         self.random_move()
 
         reward=0.0
-        if len(action)==2:   # linear and angular viteness
-            vx, va=action
+        if len(action)==4:   # linear and angular viteness; arm angle and arm length
+            vx, va, aa, al=action 
             yaw_world=self.pr2_yaw+va
             offset_x=math.cos(yaw_world)*vx
             offset_y=math.sin(yaw_world)*vx
@@ -79,7 +87,20 @@ class NAMOENV(gym.Env):
                 self.robot_pos[:]=sub_goal
                 self.pr2_yaw+=va
                 # reward+=0.2  # finish the subgoal
-
+            elif ray[0][0] in self.movable:
+                # when the movable obstacles block the way
+                # remove it through pick-and-place
+                arrange_angle=aa+self.pr2_yaw
+                arrange_offset_x=math.cos(arrange_angle)*al
+                arrange_offset_y=math.sin(arrange_angle)*al
+                new_point=self.robot_pos[:]+np.array([arrange_offset_x, arrange_offset_y, 0],dtype=np.float32)
+                if not test_collide([new_point], radius=1, threshold=0.1):
+                    update_movable_obstacle_point(ray[0][0], new_point)
+                    ray=p.rayTest(self.robot_pos, sub_goal)
+                    if ray[0][0]<0: # not collision
+                        self.robot_pos[:]=sub_goal
+                        self.pr2_yaw+=va
+                        
         else:
             raise ValueError("Received invalid action={}".format(action))
         
@@ -98,7 +119,7 @@ class NAMOENV(gym.Env):
             # self.reward_list=[0]
 
         # distance reward
-        self.reward_dict["distance"]=1/distance
+        self.reward_dict["distance"]=math.log(self.whole_distance)-math.log(distance)
         reward=reward+self.reward_dict["distance"]
 
         info={"robot_pos":self.robot_pos}
@@ -111,6 +132,11 @@ class NAMOENV(gym.Env):
 
         # self.reward_list.append(reward)
         # mean_reward=sum(self.reward_list)/len(self.reward_list)
+        
+        # maximum steps constraints
+        # self.current_step+=1
+        # if self.current_step>self.max_steps_per_episode:
+        #     done=True
         return observation, reward, done, info
 
     def render(self):
@@ -122,9 +148,6 @@ class NAMOENV(gym.Env):
     def close(self):
         disconnect()
         pass
-
-    def change_obstacle_point(self, new_point):
-        set_point(self.movable[0], Point(x=new_point[0],y=new_point[1], z=new_point[2]))
 
     def random_move(self):
         # generate random number [-1,1]

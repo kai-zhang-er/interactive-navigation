@@ -4,12 +4,12 @@ from environment import NAMOENV
 from utils.pybullet_tools.utils import wait_for_duration, wait_for_user
 
 
-env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=False)
-# env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=True)
+# env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=False)
+env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=True)
 
-model=PPO.load("models/ppo_nav_ang_80000_nosub")
+model=PPO.load("models/ppo_namo_ang_nosub_100000_log")
 
-num_episodes=30
+num_episodes=1
 finish_steps=[]
 success_rate=0
 max_steps=1000
@@ -23,7 +23,7 @@ for i in range(num_episodes):
         obs, rewards, dones, info=env.step(action)
         # print("pos: {}, reward={}, done={}".format(info["robot_pos"], rewards, dones))
         env.render()
-        # wait_for_duration(0.01)
+        wait_for_duration(0.01)
         if dones:
             finish_steps.append(j)
             print("goal reached!, steps={},reward={}".format(j, rewards))

@@ -6,7 +6,7 @@ import math
 from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_link_state, plan_joint_motion, ray_from_pixel, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
     Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
-        joints_from_names, get_joint_positions
+        joints_from_names, get_joint_positions, body_collision
 from utils.pybullet_tools.pr2_problems import create_pr2
 from utils.pybullet_tools.pr2_utils import set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
@@ -61,20 +61,20 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     # set_point(floor, Point(z=-0.001/2.))
     # horrizon walls
     wall1 = create_box(room_size*2+corrido_w + mound_height, mound_height, mound_height, color=GREY)
-    set_point(wall1, Point(y=-room_size/2, z=mound_height/2.))
+    set_point(wall1, Point(y=-room_size/2, z=0))
     wall2 = create_box(room_size*2+corrido_w + mound_height, mound_height, mound_height, color=GREY)
-    set_point(wall2, Point(y=room_size/2, z=mound_height/2.))
+    set_point(wall2, Point(y=room_size/2, z=0))
     wall4 = create_box(corrido_w , 2, mound_height, color=GREY)
-    set_point(wall4, Point(x=0.0, y=1, z=mound_height/2.))
+    set_point(wall4, Point(x=0.0, y=1, z=0))
     # vertical walls
     wall5 = create_box(mound_height, room_size + mound_height, mound_height, color=GREY)
-    set_point(wall5, Point(x=-6., z=mound_height/2.))
+    set_point(wall5, Point(x=-6., z=0.))
     wall6 = create_box(mound_height, room_size + mound_height, mound_height, color=GREY)
-    set_point(wall6, Point(x=6., z=mound_height/2.))
+    set_point(wall6, Point(x=6., z=0.))
     wall7 = create_box(mound_height, room_size/2 + mound_height, mound_height, color=GREY)
-    set_point(wall7, Point(x=-2.,y=1, z=mound_height/2.))
+    set_point(wall7, Point(x=-2.,y=1, z=0.))
     wall8 = create_box(mound_height, room_size/2 + mound_height, mound_height, color=GREY)
-    set_point(wall8, Point(x=2.,y=1, z=mound_height/2.))
+    set_point(wall8, Point(x=2.,y=1, z=0.))
 
     robots = []
     for i in range(n_robots):
@@ -92,16 +92,18 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     #goal_confs = {}
 
     # TODO: make the objects smaller
-    cylinder_radius = 0.25
+    cylinder_radius = 0.3
     cylinder_height=1
     body1 = create_cylinder(cylinder_radius, cylinder_height, color=RED)
-    set_point(body1, Point(x=3,y=-1., z=0.))
-    # body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
-    # set_point(body2, Point(x=3.,y=1., z=0.))
-    movable = [body1]
+    set_point(body1, Point(x=-2,y=-0.5, z=0.))
+    body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
+    set_point(body2, Point(-2,y=-1.5, z=0.))
+    movable = [body1, body2]
     #goal_holding = {robots[0]: body1}
     goal_holding = {}
-    return robots, movable, rovers
+
+    static_obstacles=[wall1,wall2, wall4, wall5, wall6, wall7, wall8]
+    return robots, movable, rovers, static_obstacles
 
 
 def add_mobile_obstacles(num=1, rover_confs=[(+1, -1.75, np.pi)]):
@@ -190,10 +192,9 @@ def get_ray_info_around_robot(robot_id):
     return get_ray_info_around_point(ray_from_pos)
     
 
-def get_ray_info_around_point(ray_from_pos):
+def get_ray_info_around_point(ray_from_pos, ray_length=1):
     ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
     total_rays=24
-    ray_length=1
     angle_interval=2*math.pi/total_rays
     ray_from_pos_array=np.repeat(ray_from_pos, total_rays, axis=0)
     ray_to_pos_array=ray_from_pos_array.copy()
@@ -211,15 +212,18 @@ def get_ray_info_around_point(ray_from_pos):
         result_list.append([r[0],r[1],distance])
     return np.array(result_list,dtype=np.float32)
 
+def test_passable(start_point, end_point):
+    ray_width=1
 
-def test_collide(ray_from_pos):
+
+def test_collide(ray_from_pos, radius, threshold=0.3):
     ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
-    ray_results=get_ray_info_around_point(ray_from_pos)
+    ray_results=get_ray_info_around_point(ray_from_pos, radius)
     min_dist=1
     for r in ray_results:
         if r[0] > -1 : # hit object id
             min_dist= r[2] if r[2]<min_dist else min_dist
-    if min_dist<0.3: # distance threshold, smaller=>collide
+    if min_dist<threshold: # distance threshold, smaller=>collide
         return True
     return False
 
@@ -237,12 +241,15 @@ def update_rover_base(rover_id, base_pos):
     base_conf=(base_pos[0][0], base_pos[0][1], np.pi)
     set_base_conf(rover_id, base_conf)
 
+def update_movable_obstacle_point(obstacle_id, new_point):
+    set_point(obstacle_id, Point(x=new_point[0], y=new_point[1], z=new_point[2]))
+
 def render_env(use_gui=True):
     simid=connect(use_gui=use_gui)
     set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
 
     with HideOutput():
-        robots, movable, mobiles=create_env()
+        robots, movable, mobiles, statics=create_env()
 
     # images=get_front_image_from_robot(robots[0])
     # plt.figure()
@@ -257,8 +264,13 @@ def render_env(use_gui=True):
     # test_ray()
     # get_pr2_yaw(robots[0])
 
-    update_robot_base(robots[0], base_conf=(4,1,np.pi))
-    wait_for_user()
+    set_point(movable[0], Point(x=-2.,y=2., z=0.))
+    for o in statics:
+        if body_collision(movable[0], o):
+            print("collide with {}".format(o))
+
+    # update_robot_base(robots[0], base_conf=(4,1,np.pi))
+    # wait_for_user()
     disconnect()
 
 def test_ray():
