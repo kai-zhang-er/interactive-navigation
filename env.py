@@ -2,13 +2,14 @@ import numpy as np
 import pybullet as p
 import matplotlib.pyplot as plt
 import math
+from utils.pybullet_tools.pr2_primitives import Conf
 
-from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_link_state, plan_joint_motion, ray_from_pixel, \
+from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_link_state, get_pose, plan_joint_motion, ray_from_pixel, wait_for_duration, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
     Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
         joints_from_names, get_joint_positions, body_collision
-from utils.pybullet_tools.pr2_problems import create_pr2
-from utils.pybullet_tools.pr2_utils import set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
+from utils.pybullet_tools.pr2_problems import create_pr2, Problem
+from utils.pybullet_tools.pr2_utils import get_carry_conf, get_group_conf, get_other_arm, open_arm, set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
         get_base_pose, set_joint_positions, get_disabled_collisions
 
@@ -25,32 +26,39 @@ def set_base_conf(robot, conf):
     set_joint_positions(robot, get_base_joints(robot), conf)
 
 
-def test_drake_base_motion(pr2, base_start, base_goal, obstacles=[]):
-    # TODO: combine this with test_arm_motion
-    """
-    Drake's PR2 URDF has explicit base joints
-    """
-    disabled_collisions = get_disabled_collisions(pr2)
-    base_joints = [joint_from_name(pr2, name) for name in PR2_GROUPS['base']]
-    set_joint_positions(pr2, base_joints, base_start)
-    base_joints = base_joints[:2]
-    base_goal = base_goal[:len(base_joints)]
-    # wait_if_gui('Plan Base?')
-    with LockRenderer(lock=False):
-        base_path = plan_joint_motion(pr2, base_joints, base_goal, obstacles=obstacles,
-                                      disabled_collisions=disabled_collisions)
-    if base_path is None:
-        # print('Unable to find a base path')
-        return False
-    # print(len(base_path))
-    # print("------------{}".format(base_path[0]))
-    # for bq in base_path:
-    #     set_joint_positions(pr2, base_joints, bq)
-        # wait_for_duration(0.01)
-    return True
+
 
 def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1, 
                 rover_confs=[(+1, -1.75, np.pi)]):
+    
+    static_obstacles=create_walls()
+
+    robots = []
+    for i in range(n_robots):
+        robot = create_pr2()
+        # dump_body(robot) # camera_rgb_optical_frame
+        robots.append(robot)
+        set_group_conf(robot, 'base', robot_confs[i]) #set the position
+        for arm in ARM_NAMES:
+            set_arm_conf(robot, arm, arm_conf(arm, REST_LEFT_ARM))
+            close_arm(robot, arm)
+     
+    rovers=add_mobile_obstacles(num=n_rovers, rover_confs=rover_confs)
+
+    # TODO: make the objects smaller
+    # cylinder_radius = 0.3
+    # cylinder_height=1
+    # body1 = create_cylinder(cylinder_radius, cylinder_height, color=RED)
+    # set_point(body1, Point(x=-2,y=-0.5, z=0.))
+    # body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
+    # set_point(body2, Point(-2,y=-1.5, z=0.))
+    # movable = [body1, body2]
+
+    movable_obstacles=create_movable_obstacles()
+
+    return robots, movable_obstacles, rovers, static_obstacles
+
+def create_walls():
     room_size = 4.0
     base_limits = (np.array([-6,-2]),np.array([6,2]))
     corrido_w= 4.0
@@ -76,35 +84,54 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     wall8 = create_box(mound_height, room_size/2 + mound_height, mound_height, color=GREY)
     set_point(wall8, Point(x=2.,y=1, z=0.))
 
-    robots = []
-    for i in range(n_robots):
-        robot = create_pr2()
-        # dump_body(robot) # camera_rgb_optical_frame
-        robots.append(robot)
-        set_group_conf(robot, 'base', robot_confs[i]) #set the position
-        for arm in ARM_NAMES:
-            set_arm_conf(robot, arm, arm_conf(arm, REST_LEFT_ARM))
-            close_arm(robot, arm)
-     
-    rovers=add_mobile_obstacles(num=n_rovers, rover_confs=rover_confs)
+    store_region = create_box(1, 1, 0.1, color=BLUE)
+    set_point(store_region, Point(x=-3.,y=1, z=0.))
 
-    goal_confs = {robots[0]: robot_confs[-1]}
-    #goal_confs = {}
+    goal_region= create_box(0.5, 0.5, 0.05, color=RED)
+    set_point(goal_region, Point(x=4.,y=1, z=-0.1))
 
-    # TODO: make the objects smaller
-    cylinder_radius = 0.3
-    cylinder_height=1
-    body1 = create_cylinder(cylinder_radius, cylinder_height, color=RED)
-    set_point(body1, Point(x=-2,y=-0.5, z=0.))
-    body2 = create_cylinder(cylinder_radius, cylinder_height, color=BLUE)
-    set_point(body2, Point(-2,y=-1.5, z=0.))
-    movable = [body1, body2]
-    #goal_holding = {robots[0]: body1}
-    goal_holding = {}
+    static_obstacles=[wall1,wall2, wall4, wall5, wall6, wall7, wall8, store_region]
+    return static_obstacles
 
-    static_obstacles=[wall1,wall2, wall4, wall5, wall6, wall7, wall8]
-    return robots, movable, rovers, static_obstacles
 
+def create_movable_obstacles():
+    mass = 1
+    movable_obstacles=[]
+    # from (-2,0) to (-2,-2)
+    for i in range(3, 20, 2):
+        cabbage = create_box(.1, .1, 0.8, mass=mass, color=(0, 1, 0, 1))
+        #cabbage = load_model(BLOCK_URDF, fixed_base=False)
+        set_point(cabbage, (-2, -0.1*i, 0))
+        movable_obstacles.append(cabbage)
+    return movable_obstacles
+
+def reset_movable_obstacles(movable_obstacles):
+    for i, m in enumerate(movable_obstacles):
+        pt_i=3+i*2
+        set_point(m, (-2, -0.1*pt_i, 0))
+
+def namo_problem(arm='right', grasp_type='top'):
+    other_arm = get_other_arm(arm)
+    initial_conf = get_carry_conf(arm, grasp_type)
+
+    # create pr2 abstract info
+    pr2 = create_pr2()
+    set_group_conf(pr2, 'base', (-4, -1, 0))
+    set_arm_conf(pr2, arm, initial_conf)
+    open_arm(pr2, arm)
+    set_arm_conf(pr2, other_arm, arm_conf(other_arm, REST_LEFT_ARM))
+    close_arm(pr2, other_arm)
+
+    static_obstacles=create_walls()
+    movable_obstacles=create_movable_obstacles()
+    return Problem(pr2, movable=movable_obstacles, arms=[arm], 
+                surfaces=[static_obstacles[-1]],
+                sinks=static_obstacles,
+                grasp_types=[grasp_type],
+                # goal_holding=[(arm, movable_obstacles[4])],
+                goal_on=[(movable_obstacles[4], static_obstacles[-1])]
+                )
+    
 
 def add_mobile_obstacles(num=1, rover_confs=[(+1, -1.75, np.pi)]):
     """add mobile obstacles
@@ -219,7 +246,7 @@ def test_passable(start_point, end_point):
 def test_collide(ray_from_pos, radius, threshold=0.3):
     ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
     ray_results=get_ray_info_around_point(ray_from_pos, radius)
-    min_dist=1
+    min_dist=100
     for r in ray_results:
         if r[0] > -1 : # hit object id
             min_dist= r[2] if r[2]<min_dist else min_dist
@@ -259,12 +286,13 @@ def render_env(use_gui=True):
     # ray_results=get_ray_info_around_robot(robots[0])
     # print(test_collide(np.array([[-5.0,-1.5,0.]])))
     # print(get_body_name(0))
-    # print(test_drake_base_motion(robots[0],np.array([-4.0,-2., 0.]), np.array([4.,1.,0.])))
+    print(plan_pr2_base_motion(robots[0], np.array([4.,1.,-1.0])))
     
     # test_ray()
     # get_pr2_yaw(robots[0])
 
-    set_point(movable[0], Point(x=-2.,y=2., z=0.))
+    # set_point(movable[0], Point(x=-2.,y=2., z=0.))
+
     for o in statics:
         if body_collision(movable[0], o):
             print("collide with {}".format(o))
@@ -276,6 +304,33 @@ def render_env(use_gui=True):
 def test_ray():
     ray=p.rayTest(np.array([-4.0,-1.9, 0.]), np.array([0.,-2.1,0.]))
     print(ray[0][0]>0)
+
+def plan_pr2_base_motion(robot_id, base_goal, obstacles=[]):
+    disabled_collisions = get_disabled_collisions(robot_id)
+    base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]
+    with LockRenderer(lock=True):
+        base_path = plan_joint_motion(robot_id, base_joints, base_goal, obstacles=obstacles,
+                                    disabled_collisions=disabled_collisions)
+    if base_path is None:
+        # print('Unable to find a base path')
+        # print(base_goal)
+        return
+    # print("------------{}".format(base_path[0]))
+    for bq in base_path:
+        set_joint_positions(robot_id, base_joints, bq)
+        wait_for_duration(0.005)
+
+def is_plan_possible(robot_id, base_goal, obstacles=[]):
+    disabled_collisions = get_disabled_collisions(robot_id)
+    base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]
+    with LockRenderer(lock=True):
+        base_path = plan_joint_motion(robot_id, base_joints, base_goal, obstacles=obstacles,
+                                    disabled_collisions=disabled_collisions)
+    if base_path is None:
+        return False
+    else:
+        return True
+
 if __name__=="__main__":
     render_env(use_gui=True)
     
