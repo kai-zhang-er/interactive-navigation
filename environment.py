@@ -4,11 +4,11 @@ import numpy as np
 import gym
 from gym import spaces
 import pybullet as p
-from env import create_env, is_plan_possible, plan_pr2_base_motion, reset_movable_obstacles, test_collide, get_ray_info_around_point, \
+from env import create_env, is_plan_possible, plan_pr2_base_motion, reset_movable_obstacles, get_ray_info_around_point, \
     update_robot_base, get_pr2_yaw, update_rover_base, update_movable_obstacle_point
 from run import main_simple_version
 from utils.pybullet_tools.utils import connect, disconnect, set_camera_pose, \
-    wait_for_user, HideOutput, wait_for_duration, set_point, Point
+    wait_for_user, HideOutput, wait_for_duration, get_angle, get_distance, angle_between
 
 
 class NAMOENV(gym.Env):
@@ -18,8 +18,7 @@ class NAMOENV(gym.Env):
     def __init__(self, init_pos=(-4,-1,0),
                 goal_pos=(4,1,0),
                 base_limit=([-6+0.2,6-0.2], [-2+0.2,2]),
-                distance_threshold=0.3, 
-                num_rays=24,
+                distance_threshold=0.3,
                 ray_length=1,
                 use_gui=True):
         super().__init__()
@@ -36,29 +35,86 @@ class NAMOENV(gym.Env):
 
         self.ray_length=ray_length
 
-        self.reward_dict={"collision":-3, "done":40, "distance_reward":-1}
-
         self.current_step=0
         self.max_steps_per_episode=1000
 
+        self._COLLISION_THRESHOLD=0.2
+
+        self._REMOVE_OBSTACLE_REWARD=-1
+        self._NO_ACTION_REWARD=-1
+        self._SUCCESS_REWARD=100
+        self._DISTANCE_FACTOR_REWARD=10
+        self._COLLISION_REWARD=-100
+
         # actions for base and arm
         # linear velocity, angular velocity, arm angle limit, arm length limit
-        self.action_space=spaces.Box(low=np.array([-1,-np.pi/3.0, -np.pi/2.0, 0.3]), high=np.array([1,np.pi/3.0, np.pi/2.0, 1]), shape=(4,), dtype=np.float32)
+
+        self.action_space=spaces.Box(low=np.array([-1,-np.pi/3.0]), high=np.array([1,np.pi/3.0]), shape=(2,), dtype=np.float32)
 
         # observation space
-        self.observation_space=spaces.Box(low=0, high=1, shape=(num_rays,), dtype=np.float32)
+        _SCAN_RANGE_MIN=0.1
+        _SCAN_RANGE_MAX=1.0
+        self._N_RAYS=24
+        _N_OBSERVATIONS=self._N_RAYS+4  # number of observations
+        # low=np.ones((2,self._N_RAYS+1), dtype=np.float32)
+        # low[0]=self._N_RAYS*[_SCAN_RANGE_MIN]+[0.0]
+        # low[1]=self._N_RAYS*[-1]+[-math.pi]
+
+        # high=np.ones((2,self._N_RAYS+1), dtype=np.float32)
+        # high[0]=self._N_RAYS*[self._SCAN_RANGE_MAX]+[math.inf]
+        # high[1]=self._N_RAYS*[20]+[math.pi]
+
+        # self.observation_space=spaces.Box(low=low, high=high, shape=(2,self._N_RAYS+1), dtype=np.float32)
+        # self.observation=np.ones((2,self._N_RAYS+1), dtype=np.float32)
+        
+        low=np.array(self._N_RAYS*[_SCAN_RANGE_MIN]+[0.0]+[-math.pi]+[self.base_limit[0][0], self.base_limit[1][0]])
+        high=np.array(self._N_RAYS*[_SCAN_RANGE_MAX]+[math.inf]+[math.pi]+[self.base_limit[0][1], self.base_limit[1][1]])
+        self.observation_space=spaces.Box(low=low, high=high, shape=(_N_OBSERVATIONS,), dtype=np.float32)
 
         # render configuration
         connect(use_gui=use_gui)
         set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
         with HideOutput():
             robot_confs=[self.init_pos, self.goal_pos]
-            rover_confs=[(+3, 1, np.pi)]
+            rover_confs=[(3, 1, np.pi)]
             self.rover_pos=[[rover_confs[0][0],rover_confs[0][1],0.]]
             self.robots, self.movable, self.rovers, self.statics=create_env(robot_confs=robot_confs, rover_confs=rover_confs)
 
         self.pr2_yaw=get_pr2_yaw(self.robots[0])
-        self.reward_list=[]
+
+
+    def _update_observation2(self):
+        self.ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length= self.ray_length)
+        obs_ray=self.ray_results_array[:,2]
+        obs_info=self.ray_results_array[:,0]
+        for i, o in enumerate(obs_info):
+            if o in self.movable or o < 0:
+                obs_info[i]=-1
+            else:
+                obs_info[i]=1
+
+        distance=get_distance(self.robot_pos, self.goal_pos)
+        angle=get_angle(self.robot_pos, self.goal_pos)
+        angle_diff=angle-self.pr2_yaw
+        self.observation[0,:-1]=obs_ray
+        self.observation[0,-1]=distance
+        self.observation[1,:-1]=obs_info
+        self.observation[1,-1]=angle_diff
+        # self.current_step+=1
+        # print(self.current_step)
+        return self.observation
+
+    def _update_observation(self):
+        self.ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length= self.ray_length)
+        obs_ray=self.ray_results_array[:,2]
+        distance=get_distance(self.robot_pos, self.goal_pos)
+        angle=get_angle(self.robot_pos, self.goal_pos)
+        angle_diff=angle-self.pr2_yaw
+        self.observation=np.concatenate((obs_ray, distance, angle_diff, self.robot_pos[:2]), axis=None)
+
+    def _collision_occurred(self):
+        # check collision with static or mobile obstacles
+        return bool((self.observation[:-2]<self._COLLISION_THRESHOLD).any())
 
     def reset(self):
         self.current_step=0
@@ -66,9 +122,8 @@ class NAMOENV(gym.Env):
         reset_movable_obstacles(self.movable)
         # reset the robot to initial position
         self.robot_pos[:]=self.init_pos # assign value 
-        ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length= self.ray_length)
-        observation=ray_results_array[:,2]
-        return observation
+        self._update_observation()
+        return self.observation
 
     def step(self, action):
         # rover random move
@@ -76,80 +131,59 @@ class NAMOENV(gym.Env):
         self.pick=-1
 
         reward=0.0
-        if len(action)==4:   # linear and angular viteness; arm angle and arm length
-            vx, va, aa, al=action 
+        if len(action)==2:   # linear and angular viteness; arm angle and arm length
+            vx, va=action
             yaw_world=self.pr2_yaw+va
             offset_x=math.cos(yaw_world)*vx
             offset_y=math.sin(yaw_world)*vx
 
-            sub_goal=self.robot_pos[:]+np.array([offset_x, offset_y, 0],dtype=np.float32)
+            next_goal=self.robot_pos[:]+np.array([offset_x, offset_y, 0],dtype=np.float32)
             # if test_drake_base_motion(self.robots[0], self.robot_pos, base_goal):
-            sub_goal[0]=np.clip(sub_goal[0],self.base_limit[0][0], self.base_limit[0][1])
-            sub_goal[1]=np.clip(sub_goal[1],self.base_limit[1][0], self.base_limit[1][1])
+            next_goal[0]=np.clip(next_goal[0],self.base_limit[0][0], self.base_limit[0][1])
+            next_goal[1]=np.clip(next_goal[1],self.base_limit[1][0], self.base_limit[1][1])
             
-            # if is_plan_possible(self.robots[0], sub_goal, obstacles=self.statics):
-            #     self.robot_pos[:]=sub_goal
+            # if is_plan_possible(self.robots[0], next_goal, obstacles=self.statics):
+            #     self.robot_pos[:]=next_goal
             #     self.pr2_yaw+=va
             # else:
-            ray=p.rayTest(self.robot_pos, sub_goal)
-            if ray[0][0]<0:
-                self.robot_pos[:]=sub_goal
+            # angle=get_angle(self.robot_pos, next_goal)+math.pi
+            # angle_interval=2*math.pi/self._N_RAYS
+            # angle_index=round(yaw_world/angle_interval)%self._N_RAYS
+            # obj_id=self.ray_results_array[angle_index, 0]
+            # obj_id=self.observation[1, angle_index]
+            obj_id=p.rayTest(self.robot_pos, next_goal)[0][0]
+            if obj_id<0 :
+                self.robot_pos[:]=next_goal
                 self.pr2_yaw+=va
-            elif ray[0][0] in self.movable:
+            elif obj_id in self.movable:
                 # when the movable obstacles block the way
                 # remove it through pick-and-place
-                arrange_angle=aa+self.pr2_yaw
-                arrange_offset_x=math.cos(arrange_angle)*al
-                arrange_offset_y=math.sin(arrange_angle)*al
-                new_point=self.robot_pos[:]+np.array([arrange_offset_x, arrange_offset_y, 0],dtype=np.float32)
-                if not test_collide([new_point], radius=1, threshold=0.1):
-                    update_movable_obstacle_point(ray[0][0], new_point)
-                    ray1=p.rayTest(self.robot_pos, sub_goal)
-                    update_movable_obstacle_point(ray[0][0], ray[0][3])
-                    if ray1[0][0]<0: # not collision
-                        self.robot_pos[:]=sub_goal
-                        self.pr2_yaw+=va
-                        self.pick=ray[0][0]
-                        # reward=-1
-                        
+                # update_movable_obstacle_point(obj_id, (-3,1,0))
+                self.pick=obj_id
+                # reward+=self._REMOVE_OBSTACLE_REWARD
+                self.robot_pos[:]=next_goal
+                self.pr2_yaw+=va       
+            else:
+                reward=-0.1            
         else:
             raise ValueError("Received invalid action={}".format(action))
         
         done=False
+        self._update_observation()
         # collision reward
-        # binary reward 
-        # if test_collide([self.robot_pos]):
-        #     reward+=self.reward_dict["collision"]
-
+        # if self._collision_occurred():
+        #     reward+=self._COLLISION_REWARD
         # success reward
-        distance=np.linalg.norm(self.robot_pos-self.goal_pos)
-        
-        if distance<self.T_dis:
-            reward+=self.reward_dict["done"] 
+        if self.observation[-4]<self.T_dis:
+            reward+=self._SUCCESS_REWARD 
             done=True
-            # self.reward_list=[0]
-
         # distance reward
-        self.reward_dict["distance"]=math.log(self.whole_distance)-math.log(distance)
-        reward=reward+self.reward_dict["distance"]
+        # dis_diff=self.whole_distance-self.observation[-4]
+        # reward=reward+self._DISTANCE_FACTOR_REWARD*dis_diff
 
         info={"robot_pos":self.robot_pos}
-        ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length=self.ray_length)
-        observation=ray_results_array[:,2]
-        # collision distance reward
-        # min_distance=observation.min()+0.0001
-        # collision_reward= self.reward_dict["collision"] if min_distance<self.T_dis else -1.0/min_distance
-        # reward+=collision_reward
-
-        # self.reward_list.append(reward)
-        # mean_reward=sum(self.reward_list)/len(self.reward_list)
-        
-        # maximum steps constraints
-        # self.current_step+=1
-        # if self.current_step>self.max_steps_per_episode:
-        #     done=True
         info.setdefault("pick", self.pick)
-        return observation, reward, done, info
+        return self.observation, reward, done, info
 
     def render(self):
         pr2_base_conf=(self.robot_pos[0], self.robot_pos[1], self.pr2_yaw)

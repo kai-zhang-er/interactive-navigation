@@ -12,7 +12,7 @@ n_steps=20
 for step in range(n_steps):
     print("Step {}".format(step))
     obs, reward, done, info=env.step(action)
-    print("obs={}, reward={}, done={}".format(obs, reward, done))
+    # print("obs={}, reward={}, done={}".format(obs, reward, done))
     env.render()
     if done:
         print("goal reached!, reward={}".format(reward))

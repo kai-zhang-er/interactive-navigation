@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 import math
 from utils.pybullet_tools.pr2_primitives import Conf
 
-from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_angle, get_bodies, get_link_state, get_pose, plan_joint_motion, ray_from_pixel, wait_for_duration, \
+from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_link_state, get_pose, plan_joint_motion, ray_from_pixel, wait_for_duration, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
     Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
-        joints_from_names, get_joint_positions, body_collision, angle_between
+        joints_from_names, get_joint_positions, body_collision
 from utils.pybullet_tools.pr2_problems import create_pr2, Problem
 from utils.pybullet_tools.pr2_utils import get_carry_conf, get_group_conf, get_other_arm, open_arm, set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
@@ -55,8 +55,7 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     # movable = [body1, body2]
 
     movable_obstacles=create_movable_obstacles()
-    # movable_obstacles=[]
-    # print(get_bodies())
+
     return robots, movable_obstacles, rovers, static_obstacles
 
 def create_walls():
@@ -230,18 +229,30 @@ def get_ray_info_around_point(ray_from_pos, ray_length=1):
         delta_x=ray_length*math.cos(angle_interval*i)
         delta_y=ray_length*math.sin(angle_interval*i)
         ray_to_pos_array[i]+=np.array([delta_x, delta_y,0],dtype=np.float32)
-    ray_results=p.rayTestBatch(ray_from_pos_array, ray_to_pos_array, numThreads=2)
+    ray_results=p.rayTestBatch(ray_from_pos_array, ray_to_pos_array, numThreads=1)
 
     result_list=[]
     for r in ray_results:
-        # distance=1000
-        # if r[0] > -1: # hit something, 0 is floor
-        #     distance=np.linalg.norm(ray_from_pos-r[3])
-        result_list.append([r[0],r[1],r[2]*ray_length])
+        distance=1000
+        if r[0] > -1: # hit something, 0 is floor
+            distance=np.linalg.norm(ray_from_pos-r[3])
+        result_list.append([r[0],r[1],distance])
     return np.array(result_list,dtype=np.float32)
 
 def test_passable(start_point, end_point):
     ray_width=1
+
+
+def test_collide(ray_from_pos, radius, threshold=0.3):
+    ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
+    ray_results=get_ray_info_around_point(ray_from_pos, radius)
+    min_dist=100
+    for r in ray_results:
+        if r[0] > -1 : # hit object id
+            min_dist= r[2] if r[2]<min_dist else min_dist
+    if min_dist<threshold: # distance threshold, smaller=>collide
+        return True
+    return False
 
 
 def update_robot_base(robot_id, base_conf):
@@ -272,10 +283,10 @@ def render_env(use_gui=True):
     # plt.imshow(images[0])
     # plt.show()
     # set_point(movable[0], Point(x=-2.,y=1., z=0.))
-    ray_results=get_ray_info_around_robot(robots[0])
+    # ray_results=get_ray_info_around_robot(robots[0])
     # print(test_collide(np.array([[-5.0,-1.5,0.]])))
     # print(get_body_name(0))
-    # print(plan_pr2_base_motion(robots[0], np.array([4.,1.,-1.0])))
+    print(plan_pr2_base_motion(robots[0], np.array([4.,1.,-1.0])))
     
     # test_ray()
     # get_pr2_yaw(robots[0])
@@ -321,15 +332,5 @@ def is_plan_possible(robot_id, base_goal, obstacles=[]):
         return True
 
 if __name__=="__main__":
-    # render_env(use_gui=True)
-    # print(get_angle([0.,1.], [-1,1]))
-    a1=np.array([-4,1.,0])
-    next_goal=np.array([-4,1.1,0])
-    angle=get_angle(a1, next_goal)+math.pi
-    angle_interval=2*math.pi/24
-    angle_index=int(angle/angle_interval)
-    if angle_index==24: angle_index=0
-    print(angle)
-    print(angle_index)
-    print(angle_interval*18-math.pi)
+    render_env(use_gui=True)
     

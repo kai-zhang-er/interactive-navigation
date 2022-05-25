@@ -5,9 +5,9 @@ from utils.pybullet_tools.utils import wait_for_duration, wait_for_user
 
 
 # env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=False)
-env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=True)
+env=NAMOENV(init_pos=[-4,0.,0], goal_pos=[4,0.,0], use_gui=True)
 
-model=PPO.load("models/ppo_namo_ang_nosub_100000_log")
+model=PPO.load("models/ppo_namo_allobs_100000")
 
 num_episodes=5
 finish_steps=[]
@@ -24,9 +24,10 @@ for i in range(num_episodes):
         obs, rewards, dones, info=env.step(action)
         if info["pick"]>-1:
             num_picks+=1
-        # print("pos: {}, reward={}, done={}".format(info["robot_pos"], rewards, dones))
+        print("pos: {},action={} reward={}, done={}".format(info["robot_pos"],action, rewards, dones))
         env.render_steps()
-        # wait_for_duration(0.01)
+        # env.render()
+        wait_for_duration(0.01)
         if dones:
             finish_steps.append(j)
             print("goal reached!, steps={},reward={}, picks={}".format(j, rewards, num_picks))
