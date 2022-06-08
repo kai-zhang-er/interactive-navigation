@@ -1,11 +1,13 @@
 from __future__ import print_function
+import random
+from utils.pybullet_tools.utils import set_point
 
 from pddlstream.algorithms.meta import solve, create_parser
 from utils.pybullet_tools.pr2_primitives import Pose, Conf, get_ik_ir_gen, get_motion_gen, \
     get_stable_gen, get_grasp_gen, Attach, Detach, Clean, Cook, control_commands, \
     get_gripper_joints, GripperCommand, apply_commands, State
 from utils.pybullet_tools.pr2_problems import Problem, cleaning_problem, cooking_problem
-from env import namo_problem
+from env import get_ray_info_around_robot, namo_problem
 from utils.pybullet_tools.pr2_utils import get_arm_joints, ARM_NAMES, get_group_joints, get_group_conf
 from utils.pybullet_tools.utils import connect, get_pose, is_placement, point_from_pose, \
     disconnect, get_joint_positions, enable_gravity, save_state, restore_state, HideOutput, \
@@ -17,7 +19,7 @@ from pddlstream.language.function import FunctionInfo
 from pddlstream.language.stream import StreamInfo, PartialInputs
 from pddlstream.language.object import SharedOptValue
 from pddlstream.language.external import defer_shared, never_defer
-from examples.pybullet.tamp.streams import get_cfree_approach_pose_test, get_cfree_pose_pose_test, get_cfree_traj_pose_test, \
+from streams import get_cfree_approach_pose_test, get_cfree_pose_pose_test, get_cfree_traj_pose_test, \
     move_cost_fn
 from collections import namedtuple
 
@@ -104,7 +106,7 @@ def opt_motion_fn(q1, q2):
 
 #######################################################
 
-def pddlstream_from_problem(problem, collisions=True, teleport=False):
+def pddlstream_from_problem(problem, collisions=True, teleport=False, custom_limits={}):
     robot = problem.robot
 
     # TODO: integrate pr2 & tamp
@@ -155,15 +157,20 @@ def pddlstream_from_problem(problem, collisions=True, teleport=False):
                      [('Cleaned', b)  for b in problem.goal_cleaned] + \
                      [('Cooked', b)  for b in problem.goal_cooked]
 
+    base_joints=get_group_joints(robot, 'base')
+
     stream_map = {
         'sample-pose': from_gen_fn(get_stable_gen(problem, collisions=collisions)),
         'sample-grasp': from_list_fn(get_grasp_gen(problem, collisions=False)),
-        'inverse-kinematics': from_gen_fn(get_ik_ir_gen(problem, collisions=collisions, teleport=teleport)),
-        'plan-base-motion': from_fn(get_motion_gen(problem, collisions=collisions, teleport=teleport)),
-
+        'inverse-kinematics': from_gen_fn(get_ik_ir_gen(problem, collisions=True, teleport=teleport, custom_limits=custom_limits, learned="normal")),
+        'plan-base-motion': from_fn(get_motion_gen(problem, collisions=True, teleport=teleport)),
+        
+        # test if pose1 collides with pose2
         'test-cfree-pose-pose': from_test(get_cfree_pose_pose_test(collisions=collisions)),
-        'test-cfree-approach-pose': from_test(get_cfree_approach_pose_test(problem, collisions=collisions)),
-        'test-cfree-traj-pose': from_test(get_cfree_traj_pose_test(problem.robot, collisions=collisions)),
+        # test if grasping body1 will collide with body2
+        'test-cfree-approach-pose': from_test(get_cfree_approach_pose_test(problem, collisions=True)),
+        # test if a trajectory collides with other bodys
+        'test-cfree-traj-pose': from_test(get_cfree_traj_pose_test(problem.robot, collisions=True)),
 
         'MoveCost': move_cost_fn,
 
@@ -223,18 +230,24 @@ def post_process(problem, plan, teleport=False):
 
 #######################################################
 
-def main_simple_version(body_id, env, use_gui=False, partial=False, defer=False, verbose=True):
+def main_simple_version(body_list, env,use_gui=False, partial=False, defer=False, verbose=True):
     if use_gui:
         connect(use_gui=use_gui)
         set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
 
+    goals=[]
+    
+    for body_id in body_list:
+        goals.append((body_id, env.statics[-1]))
+
     with HideOutput():
-        problem = Problem(env.robots[0], movable=[body_id], arms=["right"], 
+        problem = Problem(env.robots[0], movable=env.movable, arms=["right"], 
                 surfaces=[env.statics[-1]],
                 sinks=env.statics,
                 grasp_types=["top"],
                 # goal_holding=[(arm, movable_obstacles[4])],
-                goal_on=[(body_id, env.statics[-1])]
+                goal_on=goals,
+                all_bodies=env.all_objects
                 )
     saver = WorldSaver()
     
@@ -287,6 +300,7 @@ def main_simple_version(body_id, env, use_gui=False, partial=False, defer=False,
         disconnect()
 
 
+
 def main(partial=False, defer=False, verbose=True):
     parser = create_parser()
     parser.add_argument('-cfree', action='store_true', help='Disables collisions during planning')
@@ -307,7 +321,7 @@ def main(partial=False, defer=False, verbose=True):
     saver = WorldSaver()
     #dump_world()
 
-    pddlstream_problem = pddlstream_from_problem(problem, collisions=not args.cfree, teleport=args.teleport)
+    pddlstream_problem = pddlstream_from_problem(problem, collisions=False, teleport=args.teleport)
 
     stream_info = {
         # 'test-cfree-pose-pose': StreamInfo(p_success=1e-3, verbose=verbose),

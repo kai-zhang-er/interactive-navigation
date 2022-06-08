@@ -54,13 +54,14 @@
                  (not (AtBConf ?q1)) (not (CanMove))
                  (increase (total-cost) (MoveCost ?t)))
   )
-  ;(:action move_arm
+
+  ; (:action move_arm
   ;  :parameters (?q1 ?q2 ?t)
   ;  :precondition (and (ArmMotion ?a ?q1 ?t ?q2)
   ;                     (AtAConf ?a ?q1))
   ;  :effect (and (AtAConf ?a ?q2)
   ;               (not (AtAConf ?a ?q1)))
-  ;)
+  ; )
 
   (:action pick
     :parameters (?a ?o ?p ?g ?q ?t)

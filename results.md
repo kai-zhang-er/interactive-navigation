@@ -18,3 +18,5 @@ sucess episodes: 82, success rate=0.82, average steps=491.99940000073167, averag
 - ppo_namo_allobs_100000: all data are from observation, only success reward + bad next goal penalty, 
 sucess episodes: 100, success rate=1.0, average steps=35.45996454003546, average_picks=0.659999340
 
+- PPO_preTrained/mynamo/PPO_mynamo_0_rotatefree.pth  only positive linear speed
+sucess episodes: 100, success rate=1.0, average steps=8.88999111000889, average_picks=0.54999945000055

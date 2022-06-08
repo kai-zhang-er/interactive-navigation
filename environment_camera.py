@@ -1,12 +1,12 @@
-from pprint import isreadable
 import random
 import math
 import numpy as np
 import gym
 from gym import spaces
 import pybullet as p
+from skimage.draw import line_aa
 from env import create_env, is_plan_possible, plan_pr2_base_motion, reset_movable_obstacles, get_ray_info_around_point, \
-    update_robot_base, get_pr2_yaw, update_rover_base, update_movable_obstacle_point, visualize_next_goal
+    update_robot_base, get_pr2_yaw, update_rover_base, update_movable_obstacle_point
 from run import main_simple_version
 from utils.pybullet_tools.utils import connect, disconnect, set_camera_pose, \
     wait_for_user, HideOutput, wait_for_duration, get_angle, get_distance, angle_between
@@ -27,7 +27,6 @@ class NAMOENV(gym.Env):
         # robot initial pos
         self.init_pos=np.array(init_pos,dtype=np.float32)
         self.robot_pos=self.init_pos.copy()
-        self.robot_current_pos=self.init_pos.copy()
         
         self.goal_pos=np.array(goal_pos,dtype=np.float32)
         self.whole_distance=np.linalg.norm(self.init_pos-self.goal_pos)
@@ -36,8 +35,6 @@ class NAMOENV(gym.Env):
         self.T_dis=distance_threshold
 
         self.ray_length=ray_length
-
-        self.all_objects=None
 
         self.current_step=0
         self.max_steps_per_episode=1000
@@ -73,7 +70,6 @@ class NAMOENV(gym.Env):
         
         low=np.array(self._N_RAYS*[_SCAN_RANGE_MIN]+[0.0]+[-math.pi]+[self.base_limit[0][0], self.base_limit[1][0]])
         high=np.array(self._N_RAYS*[_SCAN_RANGE_MAX]+[math.inf]+[math.pi]+[self.base_limit[0][1], self.base_limit[1][1]])
-        
         self.observation_space=spaces.Box(low=low, high=high, shape=(_N_OBSERVATIONS,), dtype=np.float32)
 
         # render configuration
@@ -133,7 +129,7 @@ class NAMOENV(gym.Env):
     def step(self, action):
         # rover random move
         self.random_move()
-        self.pick=[]
+        self.pick=-1
 
         reward=0.0
         if len(action)==2:   # linear and angular viteness; arm angle and arm length
@@ -158,18 +154,16 @@ class NAMOENV(gym.Env):
             # obj_id=self.observation[1, angle_index]
 
             self.pr2_yaw+=va 
-            # obj_id=p.rayTest(self.robot_pos, next_goal)[0][0]
-            is_reachable, hit_objects_list=self._test_reachable(next_goal)
-            if is_reachable:
-                # when the next goal is reachable
-                self.robot_current_pos[:]=self.robot_pos[:]
+            obj_id=p.rayTest(self.robot_pos, next_goal)[0][0]
+            if obj_id<0 :
                 self.robot_pos[:]=next_goal
+            elif obj_id in self.movable:
                 # when the movable obstacles block the way
                 # remove it through pick-and-place
                 # update_movable_obstacle_point(obj_id, (-3,1,0))
-                self.pick=hit_objects_list
-                ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length= 1.5)
-                self.all_objects=set(ray_results_array[:,0].astype(int))-{-1}
+                self.pick=obj_id
+                # reward+=self._REMOVE_OBSTACLE_REWARD
+                self.robot_pos[:]=next_goal     
             else:
                 reward=-0.1           
         else:
@@ -181,7 +175,7 @@ class NAMOENV(gym.Env):
         # if self._collision_occurred():
         #     reward+=self._COLLISION_REWARD
         # success reward
-        if self.observation[24]<self.T_dis:
+        if self.observation[-4]<self.T_dis:
             reward+=self._SUCCESS_REWARD 
             done=True
         # distance reward
@@ -199,15 +193,8 @@ class NAMOENV(gym.Env):
         # wait_for_duration(0.05)
 
     def render_steps(self):
-        visualize_next_goal(self.statics[-2], self.robot_pos)
-        if len(self.pick)>0:
-            # when there are movable obstacles to manipulate
-            print(self.pick)
-            visualize_next_goal(self.statics[-1], self.robot_current_pos[:2]-0.5)
+        if self.pick>-1:
             main_simple_version(self.pick, self)
-            # for obj in self.pick:
-            #     main_simple_version([obj], self)
-            print("finish grasp")
         pr2_base_conf=(self.robot_pos[0], self.robot_pos[1], self.pr2_yaw)
         plan_pr2_base_motion(self.robots[0], pr2_base_conf)
         # update_robot_base(self.robots[0], pr2_base_conf)
@@ -225,33 +212,13 @@ class NAMOENV(gym.Env):
         ray=p.rayTest(self.rover_pos[0], goal_pos)
         if ray[0][0]<0: #not collision
             self.rover_pos[0]=goal_pos
+    def _lidar_to_occupancy_map(self):
+        ray_results_array=get_ray_info_around_point([self.robot_pos], ray_length= self.ray_length)
+        occupancy_map=np.zeros((20,20), dtype=np.uint8)
+        for ray in ray_results_array:
+            rr,cc,val=line_aa(self.robot_pos[:2], ray[2][:2])
+            occupancy_map[rr,cc]=1
+        return occupancy_map
 
-    def _test_reachable(self, next_goal):
-        robot_width=0.2  # consider the robot is a 0.6*0.6 square
-        def get_bounding_box(center_point, radius):
-            bounding_box=[]
-            bounding_box.append([center_point[0]-radius, center_point[1]-radius, 0.])
-            bounding_box.append([center_point[0]-radius, center_point[1]+radius, 0.])
-            bounding_box.append([center_point[0]+radius, center_point[1]-radius, 0.])
-            bounding_box.append([center_point[0]+radius, center_point[1]+radius, 0.])
-
-            bounding_box.append([center_point[0]+radius, center_point[1], 0.])
-            bounding_box.append([center_point[0]-radius, center_point[1], 0.])
-            bounding_box.append([center_point[0], center_point[1]+radius, 0.])
-            bounding_box.append([center_point[0], center_point[1]-radius, 0.])
-            return bounding_box
-        starting_points=get_bounding_box(self.robot_pos, robot_width)
-        starting_points_array=np.array(starting_points)
-        goal_points=get_bounding_box(next_goal, robot_width)
-        goal_points_array=np.array(goal_points)
-        ray_results=p.rayTestBatch(starting_points_array, goal_points_array, numThreads=2)
-        hit_movable_object_list=[]
-        is_reachable=True
-        for ray in ray_results:
-            if ray[0] in self.movable and ray[0] not in hit_movable_object_list:
-                hit_movable_object_list.append(ray[0])
-            elif ray[0] in self.statics:
-                is_reachable=False
-            
-        return is_reachable, hit_movable_object_list
+        
 
