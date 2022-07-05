@@ -1,3 +1,6 @@
+import statistics
+from cv2 import line
+import cv2
 import numpy as np
 import pybullet as p
 import matplotlib.pyplot as plt
@@ -9,7 +12,7 @@ from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, ge
     Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
         joints_from_names, get_joint_positions, body_collision, angle_between
 from utils.pybullet_tools.pr2_problems import create_pr2, Problem
-from utils.pybullet_tools.pr2_utils import get_carry_conf, get_group_conf, get_other_arm, learned_forward_generator, load_inverse_reachability, open_arm, set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
+from utils.pybullet_tools.pr2_utils import get_carry_conf, get_group_conf, get_group_joints, get_other_arm, learned_forward_generator, load_inverse_reachability, open_arm, set_arm_conf, arm_conf, REST_LEFT_ARM, close_arm, \
     set_group_conf, ARM_NAMES, link_from_name, PR2_CAMERA_MATRIX, get_camera_matrix,PR2_GROUPS,\
         get_base_pose, set_joint_positions, get_disabled_collisions
 
@@ -57,6 +60,61 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     # print(get_bodies())
     return robots, movable_obstacles, rovers, static_obstacles
 
+
+def create_env2(num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1):
+    #create robots
+    # num_robots=1
+    robots_list=[]
+    for i in range(num_robots):
+        robot = create_pr2()
+        # dump_body(robot) # camera_rgb_optical_frame
+        robots_list.append(robot)
+        set_group_conf(robot, 'base', (0,0,0)) #set the position, (x y yaw)
+        for arm in ARM_NAMES:
+            set_arm_conf(robot, arm, arm_conf(arm, REST_LEFT_ARM))
+            close_arm(robot, arm)
+    
+    # create walls
+    rect_list=[]
+    zoom_ratio=20
+    static_obstacles_list=[]
+    with open("rect.txt") as f:
+        lines=f.readlines()
+        center_y, center_x=lines[0].strip().split(",")
+        center_x=float(center_x)/zoom_ratio
+        center_y=float(center_y)/zoom_ratio
+        for line in lines[1:]:
+            items=line.strip().split(",")
+            rect_list.append([float(items[0])/zoom_ratio-center_y, float(items[1])/zoom_ratio-center_x, float(items[2])/zoom_ratio, float(items[3])/zoom_ratio])
+    for rect in rect_list:
+        wall=create_box(rect[2],rect[3], 0.7, color=GREY)
+        set_point(wall, Point(rect[0], rect[1], z=0.2))
+        static_obstacles_list.append(wall)
+    
+    store_region = create_box(0.5, 0.5, 0.01, color=BLUE)
+    set_point(store_region, Point(x=-3.,y=1, z=-0.1))
+    static_obstacles_list.append(store_region)
+    goal_region= create_box(0.5, 0.5, 0.05, color=RED)
+    set_point(goal_region, Point(x=4.,y=-1, z=-0.1))
+    static_obstacles_list.append(goal_region)
+    next_goal_marker=create_box(0.1, 0.1, 0.05, color=RED)
+    set_point(goal_region, Point(x=4.,y=-1, z=-0.1))
+    static_obstacles_list.append(next_goal_marker) 
+    #create movable obstacles
+    # num_movable_obstacles=10
+    movable_obstacles_list=[]
+    for i in range(num_movable_obstacles):
+        mo = create_box(.1, .1, 0.8, mass=1, color=(0, 1, 0, 1))
+        movable_obstacles_list.append(mo)
+    
+    safe_margin=0.5
+    base_limit=[[-center_y+safe_margin, center_y-safe_margin], [-center_x+safe_margin, center_x-safe_margin]]
+
+    rovers=add_mobile_obstacles(num=num_mobile_obstacles)
+
+    return robots_list, static_obstacles_list, movable_obstacles_list, rovers, base_limit
+    
+
 def create_walls():
     room_size = 4.0
     base_limits = (np.array([-6,-2]),np.array([6,2]))
@@ -91,7 +149,7 @@ def create_walls():
 
     next_goal_marker=create_box(0.1, 0.1, 0.05, color=RED)
 
-    static_obstacles=[wall1,wall2, wall4, wall5, wall6, wall7, wall8, next_goal_marker, store_region]
+    static_obstacles=[wall1,wall2, wall4, wall5, wall6, wall7, wall8, goal_region, next_goal_marker, store_region]
     return static_obstacles
 
 
@@ -115,8 +173,58 @@ def create_movable_obstacles():
     return movable_obstacles
 
 def reset_movable_obstacles(movable_obstacles):
+    """
+    random set the position of movable obstacles
+
+    Args:
+        movable_obstacles (_type_): _description_
+    """
+    # for i, m in enumerate(movable_obstacles):
+    #     set_point(m, (-2, -0.5*(i+1), 0))
+    x=np.random.random(len(movable_obstacles))*4-2
+    y=np.random.random(len(movable_obstacles))*2-2
     for i, m in enumerate(movable_obstacles):
-        set_point(m, (-2, -0.5*(i+1), 0))
+        set_point(m, (x[i],y[i], 0))
+
+def reset_movable_obstacles2(movable_obstacles, base_limits):
+    """
+    random set the position of movable obstacles
+
+    Args:
+        movable_obstacles (list): list of movable obstacle id
+        base_limits(list): [[min_x, max_x], [min_y, max_y]]
+    """
+    x_length=base_limits[0][1]-base_limits[0][0]
+    y_length=base_limits[1][1]-base_limits[1][0]
+    x=np.random.random(len(movable_obstacles))*x_length+base_limits[0][0]
+    y=np.random.random(len(movable_obstacles))*y_length+base_limits[1][0]
+    for i, m in enumerate(movable_obstacles):
+        set_point(m, (x[i],y[i], 0))
+
+def generate_no_collision_pose(base_limits, collision_threshold=0.5,max_try=100):
+    x_length=base_limits[0][1]-base_limits[0][0]
+    y_length=base_limits[1][1]-base_limits[1][0]
+    for i in range(max_try):
+        x=np.random.random()*x_length+base_limits[0][0]
+        y=np.random.random()*y_length+base_limits[1][0]
+        ray_info=get_ray_info_around_point([(x, y, 0)],ray_length=2, total_rays=60)
+        bottom_ray=p.rayTest((x,y,-1),(x,y,1)) # to solve a bug caused in pybullet
+        collision=False
+        if bottom_ray[0][0]>-1:
+            collision=True
+            continue
+        for r in ray_info:
+            if r[0]>-1:
+                if r[2]<collision_threshold: # if collide, regenerate
+                    collision=True
+                    continue
+                # if not collide, check the others
+        if not collision: #after checking all, no collision, return the pose
+            return [x, y]
+    if collision: # after all try, collide all the way
+        raise Exception(" Invalid environment, can't find a free space")
+                    
+
 
 def namo_problem(arm='right', grasp_type='top'):
     other_arm = get_other_arm(arm)
@@ -228,24 +336,25 @@ def get_ray_info_around_robot(robot_id):
     return get_ray_info_around_point(ray_from_pos)
     
 
-def get_ray_info_around_point(ray_from_pos, ray_length=1):
+def get_ray_info_around_point(ray_from_pos, ray_length=1, total_rays=24):
     ray_from_pos=np.array(ray_from_pos, dtype=np.float32)
-    total_rays=24
     angle_interval=2*math.pi/total_rays
     ray_from_pos_array=np.repeat(ray_from_pos, total_rays, axis=0)
     ray_to_pos_array=ray_from_pos_array.copy()
+    angle_list=[]
     for i in range(total_rays):
         delta_x=ray_length*math.cos(angle_interval*i)
         delta_y=ray_length*math.sin(angle_interval*i)
+        angle_list.append(angle_interval*i)
         ray_to_pos_array[i]+=np.array([delta_x, delta_y,0],dtype=np.float32)
     ray_results=p.rayTestBatch(ray_from_pos_array, ray_to_pos_array, numThreads=2)
 
     result_list=[]
-    for r in ray_results:
+    for i,r in enumerate(ray_results):
         # distance=1000
         # if r[0] > -1: # hit something, 0 is floor
         #     distance=np.linalg.norm(ray_from_pos-r[3])
-        result_list.append([r[0],r[1],r[2]*ray_length])
+        result_list.append([r[0],angle_list[i],r[2]*ray_length])
     return np.array(result_list,dtype=np.float32)
 
 def test_passable(start_point, end_point):
@@ -284,20 +393,23 @@ def render_env(use_gui=True):
     with HideOutput():
         robots, movable, mobiles, statics=create_env()
 
-    update_robot_base(robots[0], ((-3,0,0)))
-    print(get_base_values(robots[0]))
-    print(base_values_from_pose(get_base_pose(robots[0])))
+    update_robot_base(robots[0], ((0,1,-3)))
+    # print(get_base_values(robots[0]))
+    # print(base_values_from_pose(get_base_pose(robots[0])))
     # images=get_front_image_from_robot(robots[0])
     # plt.figure()
     # plt.imshow(images[0])
     # plt.show()
 
+    print(p.rayTest((0,1,-0.5),(0,1,0.)))
     # set_point(movable[0], Point(x=-2.,y=1., z=0.))
     # ray_results=get_ray_info_around_robot(robots[0])
     # print(test_collide(np.array([[-5.0,-1.5,0.]])))
     # print(get_body_name(0))
-    # print(plan_pr2_base_motion(robots[0], np.array([4.,1.,-1.0])))
-    
+    print(plan_pr2_base_motion(robots[0], np.array([-4.,-1.,-1.0]), obstacles=statics))
+    print( get_group_joints(robots[0], 'base'))
+    print("joint value {}".format(joint_from_name(robots[0], 'x')))
+
     # test_ray()
     # get_pr2_yaw(robots[0])
 
@@ -322,17 +434,19 @@ def test_ray():
 def plan_pr2_base_motion(robot_id, base_goal, obstacles=[]):
     disabled_collisions = get_disabled_collisions(robot_id)
     base_joints = [joint_from_name(robot_id, name) for name in PR2_GROUPS['base']]
+    print("-----obstacles-----{}".format(obstacles))
     with LockRenderer(lock=True):
         base_path = plan_joint_motion(robot_id, base_joints, base_goal, obstacles=obstacles,
                                     disabled_collisions=disabled_collisions)
     if base_path is None:
-        print('Unable to find a base path')
-        print(base_goal)
-        return
+        print('Unable to find a base path to {}'.format(base_goal))
+        # print(base_goal)
+        return False, base_path
     # print("------------{}".format(base_path[0]))
     for bq in base_path:
         set_joint_positions(robot_id, base_joints, bq)
         wait_for_duration(0.005)
+    return True, base_path
 
 def is_plan_possible(robot_id, base_goal, obstacles=[]):
     disabled_collisions = get_disabled_collisions(robot_id)
@@ -341,10 +455,121 @@ def is_plan_possible(robot_id, base_goal, obstacles=[]):
         base_path = plan_joint_motion(robot_id, base_joints, base_goal, obstacles=obstacles,
                                     disabled_collisions=disabled_collisions)
     if base_path is None:
-        return False
+        return False, base_path
     else:
-        return True
+        return True, base_path
 
+
+def convert_pos_to_imagepos(robot_pos, global_map_shape):
+    grid_size=0.05
+    global_pt=np.floor(robot_pos[:2]/grid_size).astype(int)
+    global_pt=np.array(global_map_shape)//2+np.array([global_pt[0], -global_pt[1]])
+    return global_pt
+
+def convert_imagepos_to_pos(image_pos):
+    grid_size=0.05
+    cx, cy=235.5,154.5
+    real_x=(image_pos[0]-cx)*grid_size
+    real_y=-(image_pos[1]-cy)*grid_size
+    return [real_x, real_y]
+
+def get_occupancy_map_from_pos(robot_pos, global_map):
+    """generate occupancy map from ray results at robot_pos
+
+    Args:
+        robot_pos (_type_): _description_
+        global_map (_type_): _description_
+
+    Returns:
+        _type_: seen are
+    """
+    rays_info=get_ray_info_around_point([robot_pos], ray_length=2, total_rays=60)
+    min_length=0.2
+    grid_size=0.05
+    global_center_pt=convert_pos_to_imagepos(robot_pos, global_map_shape=global_map.shape)
+    local_center_pt=[40,40]
+    # create the occupancy map
+    # 0: unknown, 1: obstacle, 2: free space
+    grid_mat=np.zeros((80,80), dtype=np.uint8) 
+
+    obs_mat=np.zeros(grid_mat.shape, dtype=np.uint8)
+    
+    for r in rays_info:
+        grid_loc=np.floor([r[2]*math.cos(r[1])/grid_size+local_center_pt[0], -r[2]*math.sin(r[1])/grid_size+local_center_pt[1]]).astype(int)
+        grid_mat=cv2.line(grid_mat,local_center_pt, grid_loc, thickness=1,color=2)
+        if r[0]>0:
+            obs_mat[grid_loc[1], grid_loc[0]]=1
+    kernel=np.ones((3,3), np.uint8)
+    grid_mat=cv2.morphologyEx(grid_mat, cv2.MORPH_CLOSE, kernel)
+
+    kernel=np.ones((7,7), np.uint8)
+    obs_mat=cv2.morphologyEx(obs_mat, cv2.MORPH_CLOSE, kernel)
+    
+    grid_mat[obs_mat==1]=1
+
+    related_region=global_map[global_center_pt[1]-40:global_center_pt[1]+40, global_center_pt[0]-40:global_center_pt[0]+40]
+    related_region[grid_mat==1]=1
+    related_region[grid_mat==2]=2
+    return related_region
+
+
+def render_env2(use_gui=True):
+    simid=connect(use_gui=use_gui)
+    set_camera_pose(camera_point=[0,-5,10], target_point=[0,0,0])
+
+    with HideOutput():
+        robots, static, movable, rovers, base_limit=create_env2()
+
+    
+    # print(get_base_values(robots[0]))
+    # print(base_values_from_pose(get_base_pose(robots[0])))
+    # images=get_front_image_from_robot(robots[0])
+    # plt.figure()
+    # plt.imshow(images[0])
+    # plt.show()
+
+    # print(p.rayTest((0,1,-0.5),(0,1,0.)))
+    # set_point(movable[0], Point(x=-2.,y=1., z=0.))
+    # ray_results=get_ray_info_around_robot(robots[0])
+    # print(test_collide(np.array([[-5.0,-1.5,0.]])))
+    # print(get_body_name(0))
+    # print(plan_pr2_base_motion(robots[0], np.array([7.8523517, -1.2077711,-1.0])))
+    # print( get_group_joints(robots[0], 'base'))
+    # print("joint value {}".format(joint_from_name(robots[0], 'x')))
+
+    # test_ray()
+    # get_pr2_yaw(robots[0])
+
+    # set_point(movable[0], Point(x=-2.,y=2., z=0.))
+
+    # for o in statics:
+    #     if body_collision(movable[0], o):
+    #         print("collide with {}".format(o))
+
+    # update_robot_base(robots[0], base_conf=(4,1,np.pi))
+
+    # test from_rays_to_occupancy_map
+    robot_pos=np.array([0, 1,0])
+    update_robot_base(robots[0], (robot_pos))
+    global_map=np.zeros((800,800), dtype=np.uint8)
+    local_map=get_occupancy_map_from_pos(robot_pos, global_map)
+    pos=convert_imagepos_to_pos([114, 165])
+    robot_pos=np.array([pos[0], pos[1],0])
+    update_robot_base(robots[0], (robot_pos))
+    local_map=get_occupancy_map_from_pos(robot_pos, global_map)
+
+    # plt.imshow(local_map)
+
+    plt.figure(2)
+    plt.imshow(global_map)
+    plt.show()
+    # wait_for_user()
+
+    # test_manipulate_region()
+    # t=learned_forward_generator(robots[0],(-3,0,0),"left", "top")
+    # print(t)
+    disconnect()
 if __name__=="__main__":
-    render_env(use_gui=True)
-    print(get_angle([0.,1.], [1, 0]))
+    render_env2(use_gui=False)
+    print(convert_imagepos_to_pos([114, 165]))
+    

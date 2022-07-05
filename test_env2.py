@@ -8,7 +8,7 @@ import torch
 import numpy as np
 
 import gym
-from environment import NAMOENV
+from environment_explore import NAMOENV
 
 from PPO import PPO
 
@@ -34,7 +34,7 @@ def test():
     # max_ep_len = 1500           # max timesteps in one episode
     # action_std = 0.1            # set same std for action distribution which was used while saving
 
-    env_name = "mynamo"
+    env_name = "explore"
     has_continuous_action_space = True
     max_ep_len = 1000           # max timesteps in one episode
     action_std = 0.1            # set same std for action distribution which was used while saving
@@ -76,7 +76,7 @@ def test():
     checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num_pretrained)
     print("loading network from : " + checkpoint_path)
 
-    # best_checkpoint_path="PPO_preTrained/mynamo/best_reward.pth"
+    # best_checkpoint_path="PPO_preTrained/explore/best_reward.pth"
     # ppo_agent.load(best_checkpoint_path)
     ppo_agent.load(checkpoint_path)
 
@@ -94,6 +94,7 @@ def test():
         for t in range(1, max_ep_len+1):
             action = ppo_agent.select_action(state)
             state, reward, done, info = env.step(action)
+            # print(action)
             ep_reward += reward
 
             num_picks+=len(info["pick"])

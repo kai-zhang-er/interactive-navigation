@@ -8,7 +8,7 @@ import numpy as np
 
 import gym
 
-from environment import NAMOENV
+from environment_explore import NAMOENV
 from PPO import PPO
 
 ################################### Training ###################################
@@ -16,7 +16,7 @@ def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "mynamo"
+    env_name = "explore"
 
     has_continuous_action_space = True  # continuous action space; else discrete
 
@@ -49,7 +49,7 @@ def train():
     #####################################################
 
 
-    env = NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=False)
+    env = NAMOENV(use_gui=False)
 
     # state space dimension
     state_dim = env.observation_space.shape[0]
@@ -72,7 +72,7 @@ def train():
           os.makedirs(log_dir)
 
     #### get number of log files in log directory
-    run_num = 0
+    run_num = 1
     current_num_files = next(os.walk(log_dir))[2]
     run_num = len(current_num_files)
 
@@ -84,7 +84,7 @@ def train():
     #####################################################
 
     ################### checkpointing ###################
-    run_num_pretrained = "random_60rays"      #### change this to prevent overwriting weights in same env_name folder
+    run_num_pretrained = "random_60rays_rnn"      #### change this to prevent overwriting weights in same env_name folder
 
     directory = "PPO_preTrained"
     if not os.path.exists(directory):
@@ -143,9 +143,9 @@ def train():
     # initialize a PPO agent
     ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
 
-    if os.path.isfile(checkpoint_path):
-        ppo_agent.load(checkpoint_path)
-        print("load pretrained model from {}".format(checkpoint_path))
+    # if os.path.isfile(checkpoint_path):
+    #     ppo_agent.load(checkpoint_path)
+    #     print("load pretrained model from {}".format(checkpoint_path))
 
     # track total training time
     start_time = datetime.now().replace(microsecond=0)

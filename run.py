@@ -162,15 +162,15 @@ def pddlstream_from_problem(problem, collisions=True, teleport=False, custom_lim
     stream_map = {
         'sample-pose': from_gen_fn(get_stable_gen(problem, collisions=collisions)),
         'sample-grasp': from_list_fn(get_grasp_gen(problem, collisions=False)),
-        'inverse-kinematics': from_gen_fn(get_ik_ir_gen(problem, collisions=True, teleport=teleport, custom_limits=custom_limits, learned="normal")),
-        'plan-base-motion': from_fn(get_motion_gen(problem, collisions=True, teleport=teleport)),
+        'inverse-kinematics': from_gen_fn(get_ik_ir_gen(problem, collisions=collisions, teleport=teleport, custom_limits=custom_limits, learned="normal")),
+        'plan-base-motion': from_fn(get_motion_gen(problem, collisions=collisions, teleport=teleport)),
         
         # test if pose1 collides with pose2
         'test-cfree-pose-pose': from_test(get_cfree_pose_pose_test(collisions=collisions)),
         # test if grasping body1 will collide with body2
-        'test-cfree-approach-pose': from_test(get_cfree_approach_pose_test(problem, collisions=True)),
+        'test-cfree-approach-pose': from_test(get_cfree_approach_pose_test(problem, collisions=collisions)),
         # test if a trajectory collides with other bodys
-        'test-cfree-traj-pose': from_test(get_cfree_traj_pose_test(problem.robot, collisions=True)),
+        'test-cfree-traj-pose': from_test(get_cfree_traj_pose_test(problem.robot, collisions=collisions)),
 
         'MoveCost': move_cost_fn,
 
@@ -230,7 +230,7 @@ def post_process(problem, plan, teleport=False):
 
 #######################################################
 
-def main_simple_version(body_list, env,use_gui=False, partial=False, defer=False, verbose=True):
+def main_simple_version(body_list, env, custom_limits={}, use_gui=False, partial=False, defer=False):
     if use_gui:
         connect(use_gui=use_gui)
         set_camera_pose(camera_point=[0,-5,5], target_point=[0,0,0])
@@ -241,7 +241,7 @@ def main_simple_version(body_list, env,use_gui=False, partial=False, defer=False
         goals.append((body_id, env.statics[-1]))
 
     with HideOutput():
-        problem = Problem(env.robots[0], movable=env.movable, arms=["right"], 
+        problem = Problem(env.robots[0], movable=body_list, arms=["right"], 
                 surfaces=[env.statics[-1]],
                 sinks=env.statics,
                 grasp_types=["top"],
@@ -251,7 +251,8 @@ def main_simple_version(body_list, env,use_gui=False, partial=False, defer=False
                 )
     saver = WorldSaver()
     
-    pddlstream_problem = pddlstream_from_problem(problem, collisions=False, teleport=False)
+    
+    pddlstream_problem = pddlstream_from_problem(problem,custom_limits=custom_limits, collisions=True, teleport=False)
 
     stream_info = {
         # 'test-cfree-pose-pose': StreamInfo(p_success=1e-3, verbose=verbose),

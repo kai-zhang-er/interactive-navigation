@@ -20,3 +20,6 @@ sucess episodes: 100, success rate=1.0, average steps=35.45996454003546, average
 
 - PPO_preTrained/mynamo/PPO_mynamo_0_rotatefree.pth  only positive linear speed
 sucess episodes: 100, success rate=1.0, average steps=8.88999111000889, average_picks=0.54999945000055
+
+- PPO_preTrained/mynamo/PPO_mynamo_0_random_60rays.pth  60 rays
+sucess episodes: 100, success rate=1.0, average steps=33.05996694003306, average_picks=0.87999912000088

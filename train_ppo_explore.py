@@ -1,22 +1,16 @@
-import os
-import glob
-import time
-from datetime import datetime
-
+import datetime
 import torch
+import os
 import numpy as np
 
-import gym
+from environment_explore import NAMOENV
+from ppo_nets import PPONetsMap
 
-from environment import NAMOENV
-from PPO import PPO
-
-################################### Training ###################################
 def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "mynamo"
+    env_name = "explore"
 
     has_continuous_action_space = True  # continuous action space; else discrete
 
@@ -31,6 +25,8 @@ def train():
     action_std_decay_rate = 0.05        # linearly decay action_std (action_std = action_std - action_std_decay_rate)
     min_action_std = 0.1                # minimum action_std (stop decay after action_std <= min_action_std)
     action_std_decay_freq = int(2.5e5)  # action_std decay frequency (in num timesteps)
+    
+    device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     #####################################################
 
     ## Note : print/log frequencies should be > than max_ep_len
@@ -46,21 +42,18 @@ def train():
     lr_critic = 0.001       # learning rate for critic network
 
     random_seed = 0         # set random seed if required (0 = no random seed)
+
+    batch_size=1
     #####################################################
 
-
-    env = NAMOENV(init_pos=[-4,1,0], goal_pos=[4,-1,0], use_gui=False)
-
-    # state space dimension
-    state_dim = env.observation_space.shape[0]
+    env=NAMOENV()
 
     # action space dimension
     if has_continuous_action_space:
         action_dim = env.action_space.shape[0]
     else:
         action_dim = env.action_space.n
-
-    ###################### logging ######################
+     ###################### logging ######################
 
     #### log files for multiple runs are NOT overwritten
     log_dir = "PPO_logs"
@@ -72,7 +65,7 @@ def train():
           os.makedirs(log_dir)
 
     #### get number of log files in log directory
-    run_num = 0
+    run_num = 1
     current_num_files = next(os.walk(log_dir))[2]
     run_num = len(current_num_files)
 
@@ -84,7 +77,7 @@ def train():
     #####################################################
 
     ################### checkpointing ###################
-    run_num_pretrained = "random_60rays"      #### change this to prevent overwriting weights in same env_name folder
+    run_num_pretrained = "random_60rays_rnn"      #### change this to prevent overwriting weights in same env_name folder
 
     directory = "PPO_preTrained"
     if not os.path.exists(directory):
@@ -99,7 +92,6 @@ def train():
     print("save checkpoint path : " + checkpoint_path)
     #####################################################
 
-
     ############# print all hyperparameters #############
     print("--------------------------------------------------------------------------------------------")
     print("max training timesteps : ", max_training_timesteps)
@@ -108,8 +100,8 @@ def train():
     print("log frequency : " + str(log_freq) + " timesteps")
     print("printing average reward over episodes in last : " + str(print_freq) + " timesteps")
     print("--------------------------------------------------------------------------------------------")
-    print("state space dimension : ", state_dim)
-    print("action space dimension : ", action_dim)
+    # print("state space dimension : ", state_dim)
+    # print("action space dimension : ", action_dim)
     print("--------------------------------------------------------------------------------------------")
     if has_continuous_action_space:
         print("Initializing a continuous action space policy")
@@ -140,14 +132,9 @@ def train():
 
     ################# training procedure ################
 
-    # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
-
-    if os.path.isfile(checkpoint_path):
-        ppo_agent.load(checkpoint_path)
-        print("load pretrained model from {}".format(checkpoint_path))
-
-    # track total training time
+    model=PPONetsMap(act_dim=action_dim, device=device)
+    model.to(device)
+    
     start_time = datetime.now().replace(microsecond=0)
     print("Started training at (GMT) : ", start_time)
 
@@ -171,29 +158,23 @@ def train():
     # training loop
     while time_step <= max_training_timesteps:
 
-        state = env.reset()
+        obs = env.reset()  # task info, large map, small map
+        hidden_state=model.init_hidden(batch_size)
         current_ep_reward = 0
 
+        mb_large_maps, mb_small_maps=[],[]
+
         for t in range(1, max_ep_len+1):
+            res=model(obs, hidden_state=hidden_state)
+            actions, log_probs, entropy, vals, hidden_state, act_logits=res
 
-            # select action with policy
-            action = ppo_agent.select_action(state)
-            state, reward, done, _ = env.step(action)
+            mb_large_maps.append(obs[1])
+            mb_small_maps.append(obs[2])
 
-            # saving reward and is_terminals
-            ppo_agent.buffer.rewards.append(reward)
-            ppo_agent.buffer.is_terminals.append(done)
+            obs, rewards, dones, infos=env.step(actions.cpu().data.numpy().flatten())
 
+            current_ep_reward+=rewards
             time_step +=1
-            current_ep_reward += reward
-
-            # update PPO agent
-            if time_step % update_timestep == 0:
-                ppo_agent.update()
-
-            # if continuous action space; then decay action std of ouput action distribution
-            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
-                ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
             # log in logging file
             if time_step % log_freq == 0:
@@ -217,12 +198,6 @@ def train():
 
                 print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step, print_avg_reward))
                 
-                if best_reward<print_avg_reward:
-                    best_reward=print_avg_reward
-                    best_checkpoint_path=directory+"best_reward.pth"
-                    ppo_agent.save(best_checkpoint_path)
-                    print("save the best to "+best_checkpoint_path)
-
                 print_running_reward = 0
                 print_running_episodes = 0
 
@@ -231,13 +206,13 @@ def train():
                 print("--------------------------------------------------------------------------------------------")
                 print("saving model at : " + checkpoint_path)
                 
-                ppo_agent.save(checkpoint_path)
+                model.save(checkpoint_path)
                 print("model saved")
                 print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
                 print("--------------------------------------------------------------------------------------------")
 
             # break; if the episode is over
-            if done:
+            if dones:
                 break
 
         print_running_reward += current_ep_reward
@@ -263,10 +238,4 @@ def train():
 if __name__ == '__main__':
 
     train()
-    
-    
-    
-    
-    
-    
     
