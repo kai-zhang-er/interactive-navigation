@@ -1,15 +1,10 @@
 import os
-import glob
-import time
 from datetime import datetime
 
 import torch
 import numpy as np
 
-import gym
-
-# from environment_guide_image import NAMOENV
-from environment import NAMOENV
+from environment_explore import NAMOENV
 from PPO import PPO
 
 ################################### Training ###################################
@@ -17,11 +12,11 @@ def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "guide"
+    env_name = "explore"
 
     has_continuous_action_space = True  # continuous action space; else discrete
 
-    max_ep_len = 1000                   # max timesteps in one episode
+    max_ep_len = 500                   # max timesteps in one episode
     max_training_timesteps = int(3e6)   # break training loop if timeteps > max_training_timesteps
 
     print_freq = max_ep_len * 10        # print avg reward in the interval (in num timesteps)
@@ -85,7 +80,7 @@ def train():
     #####################################################
 
     ################### checkpointing ###################
-    run_num_pretrained = "random_60rays_rnn"      #### change this to prevent overwriting weights in same env_name folder
+    run_num_pretrained = "4_steps_3"      #### change this to prevent overwriting weights in same env_name folder
 
     directory = "PPO_preTrained"
     if not os.path.exists(directory):
@@ -144,9 +139,10 @@ def train():
     # initialize a PPO agent
     ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
 
-    # if os.path.isfile(checkpoint_path):
-    #     ppo_agent.load(checkpoint_path)
-    #     print("load pretrained model from {}".format(checkpoint_path))
+    last_path="/home/zk/program/github/my/myplan3/PPO_preTrained/explore/PPO_explore_0_4_steps_2.pth"
+    if os.path.isfile(last_path):
+        ppo_agent.load(last_path)
+        print("load pretrained model from {}".format(last_path))
 
     # track total training time
     start_time = datetime.now().replace(microsecond=0)
@@ -218,12 +214,6 @@ def train():
 
                 print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step, print_avg_reward))
                 
-                if best_reward<print_avg_reward:
-                    best_reward=print_avg_reward
-                    best_checkpoint_path=directory+"best_reward.pth"
-                    ppo_agent.save(best_checkpoint_path)
-                    print("save the best to "+best_checkpoint_path)
-
                 print_running_reward = 0
                 print_running_episodes = 0
 

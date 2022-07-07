@@ -41,7 +41,7 @@ class NAMOENV(gym.Env):
 
         self.all_objects=None
 
-        self.global_map=np.zeros((800,800), dtype=np.uint8)
+        self.global_map=np.zeros((400,400), dtype=np.uint8)
 
         self.current_step=0
         self.max_steps_per_episode=1000
@@ -114,7 +114,7 @@ class NAMOENV(gym.Env):
     def reset(self, random_pt=True):
         # plt.imshow(self.global_map)
         # plt.show()
-        self.global_map=np.zeros((800,800), dtype=np.uint8)
+        # self.global_map=np.zeros((800,800), dtype=np.uint8)
         self.seen_area=0
 
         self.current_step=0
@@ -128,7 +128,7 @@ class NAMOENV(gym.Env):
             # self.goal_pos[:2]=generate_no_collision_pose(self.base_limits)
             self.goal_pos[:2]=np.array([7,5])
         else:
-            self.selected_path_id=random.randint(0, len(self.path_labels))
+            self.selected_path_id=random.randint(0, len(self.path_labels)-1)
             self.robot_pos[:2]=np.array(self.path_labels[self.selected_path_id][0])
             self.goal_pos[:2]=np.array(self.path_labels[self.selected_path_id][-1])
             self.pos_id=0
@@ -215,8 +215,13 @@ class NAMOENV(gym.Env):
             print("success")
             done=True
         # distance reward
-        dis_reward=max(0,min(1,(self.whole_distance-self.observation[0][0])/(self.whole_distance-1)))
-        reward=reward+dis_reward
+        next_id=min(self.pos_id+3, len(self.path_labels[self.selected_path_id])-1)
+        next_pt=self.path_labels[self.selected_path_id][next_id]
+        # print(next_pt)
+        distance=get_distance(self.robot_pos[:2], next_pt)
+        if distance<self.T_dis:
+            reward+=5
+            self.pos_id+=3
 
         info={"robot_pos":self.robot_pos,
                 "seen_area": self.seen_area,

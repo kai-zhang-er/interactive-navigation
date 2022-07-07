@@ -1,32 +1,41 @@
 import os
-import glob
-import time
 from datetime import datetime
 
 import torch
 import numpy as np
 
-import gym
-
-# from environment_guide_image import NAMOENV
-from environment import NAMOENV
+from environment_explore import NAMOENV
 from PPO import PPO
+from imitation_net import LinearNet
+
+################################## set device ##################################
+print("============================================================================================")
+# set device to cpu or cuda
+device = torch.device('cpu')
+if(torch.cuda.is_available()): 
+    device = torch.device('cuda:0') 
+    torch.cuda.empty_cache()
+    print("Device set to : " + str(torch.cuda.get_device_name(device)))
+else:
+    print("Device set to : cpu")
+print("============================================================================================")
+
 
 ################################### Training ###################################
 def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "guide"
+    env_name = "explore_imit"
 
     has_continuous_action_space = True  # continuous action space; else discrete
 
-    max_ep_len = 1000                   # max timesteps in one episode
+    max_ep_len = 100                   # max timesteps in one episode
     max_training_timesteps = int(3e6)   # break training loop if timeteps > max_training_timesteps
 
-    print_freq = max_ep_len * 10        # print avg reward in the interval (in num timesteps)
+    print_freq = max_ep_len*10         # print avg reward in the interval (in num timesteps)
     log_freq = max_ep_len * 2           # log avg reward in the interval (in num timesteps)
-    save_model_freq = int(1e5)          # save model frequency (in num timesteps)
+    save_model_freq = int(1e4)          # save model frequency (in num timesteps)
 
     action_std = 0.6                    # starting std for action distribution (Multivariate Normal)
     action_std_decay_rate = 0.05        # linearly decay action_std (action_std = action_std - action_std_decay_rate)
@@ -85,7 +94,7 @@ def train():
     #####################################################
 
     ################### checkpointing ###################
-    run_num_pretrained = "random_60rays_rnn"      #### change this to prevent overwriting weights in same env_name folder
+    run_num_pretrained = "il_pretrain"      #### change this to prevent overwriting weights in same env_name folder
 
     directory = "PPO_preTrained"
     if not os.path.exists(directory):
@@ -142,7 +151,9 @@ def train():
     ################# training procedure ################
 
     # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
+    model = LinearNet(state_dim, action_dim)
+    loss_fn=torch.nn.MSELoss()
+    optimizer=torch.optim.Adam(model.parameters(), lr=0.0001)
 
     # if os.path.isfile(checkpoint_path):
     #     ppo_agent.load(checkpoint_path)
@@ -159,12 +170,7 @@ def train():
     log_f.write('episode,timestep,reward\n')
 
     # printing and logging variables
-    print_running_reward = 0
-    print_running_episodes = 0
-
-    log_running_reward = 0
-    log_running_episodes = 0
-    best_reward=0
+    print_running_loss = []
 
     time_step = 0
     i_episode = 0
@@ -173,79 +179,48 @@ def train():
     while time_step <= max_training_timesteps:
 
         state = env.reset()
-        current_ep_reward = 0
 
         for t in range(1, max_ep_len+1):
-
             # select action with policy
-            action = ppo_agent.select_action(state)
-            state, reward, done, _ = env.step(action)
+            state=torch.from_numpy(state).float().to(device)
+            action = model(state)
+            action_label=env.get_next_action()
 
-            # saving reward and is_terminals
-            ppo_agent.buffer.rewards.append(reward)
-            ppo_agent.buffer.is_terminals.append(done)
+            state,_,done,_=env.step(action_label)
+
+            action_label=torch.from_numpy(action_label).float().to(device)
+            loss_step=loss_fn(action, action_label)
+            print_running_loss.append(loss_step)
+
+            optimizer.zero_grad()
+            loss_step.backward()
+            optimizer.step()
 
             time_step +=1
-            current_ep_reward += reward
 
-            # update PPO agent
-            if time_step % update_timestep == 0:
-                ppo_agent.update()
-
-            # if continuous action space; then decay action std of ouput action distribution
-            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
-                ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
-
-            # log in logging file
-            if time_step % log_freq == 0:
-
-                # log average reward till last episode
-                log_avg_reward = log_running_reward / log_running_episodes
-                log_avg_reward = round(log_avg_reward, 4)
-
-                log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
-                log_f.flush()
-
-                log_running_reward = 0
-                log_running_episodes = 0
+            if done:
+                break
 
             # printing average reward
             if time_step % print_freq == 0:
 
                 # print average reward till last episode
-                print_avg_reward = print_running_reward / print_running_episodes
-                print_avg_reward = round(print_avg_reward, 2)
+                print_avg_loss = sum(print_running_loss)/len(print_running_loss)
+                # print_avg_loss = round(print_avg_loss, 4)
 
-                print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step, print_avg_reward))
-                
-                if best_reward<print_avg_reward:
-                    best_reward=print_avg_reward
-                    best_checkpoint_path=directory+"best_reward.pth"
-                    ppo_agent.save(best_checkpoint_path)
-                    print("save the best to "+best_checkpoint_path)
+                print("Episode : {} \t\t Timestep : {} \t\t Average Loss : {:.4f}".format(i_episode, time_step, print_avg_loss))
 
-                print_running_reward = 0
-                print_running_episodes = 0
+                print_running_loss=[]
 
             # save model weights
             if time_step % save_model_freq == 0:
                 print("--------------------------------------------------------------------------------------------")
                 print("saving model at : " + checkpoint_path)
                 
-                ppo_agent.save(checkpoint_path)
+                model.save(checkpoint_path)
                 print("model saved")
                 print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
                 print("--------------------------------------------------------------------------------------------")
-
-            # break; if the episode is over
-            if done:
-                break
-
-        print_running_reward += current_ep_reward
-        print_running_episodes += 1
-
-        log_running_reward += current_ep_reward
-        log_running_episodes += 1
 
         i_episode += 1
 

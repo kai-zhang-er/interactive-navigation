@@ -51,7 +51,6 @@ class ActorCritic(nn.Module):
                             nn.Tanh(),
                             nn.Linear(64, 64),
                             nn.Tanh(),
-                            nn.GRU(input_size=64,hidden_size=64,num_layers=1),
                             nn.Linear(64, action_dim),
                         )
         else:
@@ -69,7 +68,7 @@ class ActorCritic(nn.Module):
                         nn.Tanh(),
                         nn.Linear(64, 64),
                         nn.Tanh(),
-                        nn.GRU(input_size=64,hidden_size=64,num_layers=1),
+                        # nn.GRU(input_size=64,hidden_size=64,num_layers=1),
                         nn.Linear(64, 1)
                     )
         
@@ -251,7 +250,7 @@ class PPO:
         self.policy_old.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
         self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
        
-       
+   
 class MemoryPPO:
     def __init__(self, state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std_init=0.6):
         # state_dim: 60+60+4
@@ -274,20 +273,9 @@ class MemoryPPO:
                             nn.Tanh(),
                             nn.Linear(64, 64),
                         )
-        self.large_map_model=models.resnet18(pretrained=True)
-        self.small_map_model=models.resnet18(pretrained=True)
 
-        num_features=self.large_map_model.in_features
         num_in=64  # point cloud features
-        
-        self.large_map_model.avgpool=nn.AvgPool2d(3, stride=1)
-        self.large_map_model.fc=nn.Linear(num_features, 64)
-        num_in+=64
-
-        self.small_map_model.avgpool=nn.AvgPool2d(3, stride=1)
-        self.small_map_model.fc=nn.Linear(num_features, 64)
-        num_in+=64
-
+  
         self.merge_fn=nn.Linear(num_in, self.rnn_hidden_dim)
 
         self.rnn=nn.GRU(input_size=self.rnn_hidden_dim, hidden_size=self.rnn_hidden_dim, rnn_num=1)

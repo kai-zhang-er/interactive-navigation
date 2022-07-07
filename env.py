@@ -571,5 +571,7 @@ def render_env2(use_gui=True):
     disconnect()
 if __name__=="__main__":
     render_env2(use_gui=False)
-    print(convert_imagepos_to_pos([114, 165]))
+    # 370,130;362.3659221900789,121.6
+    print(convert_imagepos_to_pos([370, 130]))
+    print(convert_imagepos_to_pos([362.3, 121.6]))
     

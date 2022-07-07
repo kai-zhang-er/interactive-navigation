@@ -1,13 +1,14 @@
 from stable_baselines3.common.cmd_util import make_vec_env
 from stable_baselines3 import A2C, PPO, SAC
-from environment import NAMOENV
+# from environment import NAMOENV
+from environment_explore_discrete import NAMOENV
 from utils.pybullet_tools.utils import wait_for_duration, wait_for_user
 
 
-env=NAMOENV(init_pos=[-4,0.,0], goal_pos=[4,0.,0], use_gui=False)
-# env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=True)
+# env=NAMOENV(init_pos=[-4,0.,0], goal_pos=[4,0.,0], use_gui=False)
+env=NAMOENV(init_pos=[-4,1,0], goal_pos=[4,1,0], use_gui=True)
 
-model=PPO.load("models/ppo_namo_rotatefree_100000")
+model=PPO.load("models/ppo_namo_discrete_100000")
 
 num_episodes=100
 finish_steps=[]
@@ -23,7 +24,7 @@ for i in range(num_episodes):
     for j in range(max_steps):
         action, _=model.predict(obs)
         obs, rewards, dones, info=env.step(action)
-        if info["pick"]>-1:
+        if len(info["pick"])>0:
             num_picks+=1
         # print("pos: {}, reward={}, done={}".format(info["robot_pos"], rewards, dones))
         env.render()

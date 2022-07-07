@@ -18,7 +18,7 @@ class NAMOENV(gym.Env):
     """
     def __init__(self, init_pos=(-4,-1,0),
                 goal_pos=(4,1,0),
-                distance_threshold=0.3,
+                distance_threshold=0.7,
                 ray_length=2,
                 use_gui=True):
         super().__init__()
@@ -49,8 +49,8 @@ class NAMOENV(gym.Env):
         # actions for base and arm
         # linear velocity, angular velocity, arm angle limit, arm length limit
 
-        self.action_space=spaces.Box(low=np.array([0.,-np.pi/3.0]), high=np.array([1.5,np.pi/3.0]), shape=(2,), dtype=np.float32)
-
+        self.action_space=spaces.Discrete(3)
+        
         # observation space
         _SCAN_RANGE_MIN=0.1
         _SCAN_RANGE_MAX=1.0
@@ -125,10 +125,10 @@ class NAMOENV(gym.Env):
             # self.goal_pos[:2]=generate_no_collision_pose(self.base_limits)
             self.goal_pos[:2]=np.array([7,5])
         else:
-            self.selected_path_id=random.randint(0, len(self.path_labels)-1)
-            # self.selected_path_id=4
+            # self.selected_path_id=random.randint(0, len(self.path_labels)-1)
+            self.selected_path_id=3
             self.robot_pos[:2]=np.array(self.path_labels[self.selected_path_id][0])
-            goal_id=min(len(self.path_labels[self.selected_path_id])-1, 4)
+            goal_id=min(len(self.path_labels[self.selected_path_id])-1, 20)
             self.goal_pos[:2]=np.array(self.path_labels[self.selected_path_id][goal_id])
             self.pos_id=0
         
@@ -150,76 +150,85 @@ class NAMOENV(gym.Env):
         self.pick=[]
         self.all_objects=None
 
-        reward=0.0
-        if len(action)==2:   # linear and angular viteness; arm angle and arm length
-            vx, va=action
-            # vx=min(vx, 1.5)
-            yaw_world=self.pr2_yaw+va
-            offset_x=math.cos(yaw_world)*vx
-            offset_y=math.sin(yaw_world)*vx
+        vx=0
+        va=0
 
-            next_goal=self.robot_pos[:]+np.array([offset_x, offset_y, 0],dtype=np.float32)
-            # if test_drake_base_motion(self.robots[0], self.robot_pos, base_goal):
-            next_goal[0]=np.clip(next_goal[0],self.base_limits[0][0], self.base_limits[0][1])
-            next_goal[1]=np.clip(next_goal[1],self.base_limits[1][0], self.base_limits[1][1])
-            
-            # if is_plan_possible(self.robots[0], next_goal, obstacles=self.statics):
-            #     self.robot_pos[:]=next_goal
-            #     self.pr2_yaw+=va
-            # else:
-            # angle=get_angle(self.robot_pos, next_goal)+math.pi
-            # angle_interval=2*math.pi/self._N_RAYS
-            # angle_index=round(yaw_world/angle_interval)%self._N_RAYS
-            # obj_id=self.ray_results_array[angle_index, 0]
-            # obj_id=self.observation[1, angle_index]
-            
-            self.pr2_yaw+=va 
-            # obj_id=p.rayTest(self.robot_pos, next_goal)[0][0]
-            is_reachable, hit_movable_objects_list=self._test_reachable(next_goal)
+        reward=-0.5
+        if action==0: # turn left pi/6
+            va=math.pi/6
+        elif action==1: # turn right pi/6
+            va=-math.pi/6
+        elif action==2: # forward:
+            vx=1
 
-            self.all_objects=set(self.ray_results_array[:,0].astype(int))-{-1, 0}
-            if is_reachable:
-                # when the next goal is reachable
-                self.robot_current_pos[:]=self.robot_pos[:]
-                self.robot_pos[:]=next_goal
-                
-                self.pos_id+=2
-                if len(hit_movable_objects_list)>0:
-                    # when the movable obstacles block the way
-                    # remove it through pick-and-place
-                    # update_movable_obstacle_point(obj_id, (-3,1,0))
-                    self.pick=hit_movable_objects_list
-                    # reward=reward-0.1
-            else:
-                reward=reward-0.5           
+        # vx=min(vx, 1.5)
+        yaw_world=self.pr2_yaw+va
+        offset_x=math.cos(yaw_world)*vx
+        offset_y=math.sin(yaw_world)*vx
+
+        next_goal=self.robot_pos[:]+np.array([offset_x, offset_y, 0],dtype=np.float32)
+        # if test_drake_base_motion(self.robots[0], self.robot_pos, base_goal):
+        next_goal[0]=np.clip(next_goal[0],self.base_limits[0][0], self.base_limits[0][1])
+        next_goal[1]=np.clip(next_goal[1],self.base_limits[1][0], self.base_limits[1][1])
+        
+        self.pr2_yaw+=va 
+        # obj_id=p.rayTest(self.robot_pos, next_goal)[0][0]
+        
+        is_reachable, hit_movable_objects_list=self._test_reachable(next_goal)
+        # print(is_reachable)
+
+        self.all_objects=set(self.ray_results_array[:,0].astype(int))-{-1, 0}
+        if is_reachable:
+            # when the next goal is reachable
+            self.robot_current_pos[:]=self.robot_pos[:]
+            self.robot_pos[:]=next_goal
+            # reward=reward-0.005 #step penalty
+            if len(hit_movable_objects_list)>0:
+                # when the movable obstacles block the way
+                # remove it through pick-and-place
+                # update_movable_obstacle_point(obj_id, (-3,1,0))
+                self.pick=hit_movable_objects_list
+                # pick penalty
+                # reward=reward-0.05
         else:
-            raise ValueError("Received invalid action={}".format(action))
+            # print("not reachable, {}->{}".format(self.robot_pos, next_goal))
+            reward=reward-1           
         
         done=False
         self._update_observation()
-
-        # next_id=min(self.pos_id+3, len(self.path_labels[self.selected_path_id])-1)
-        # next_pt=self.path_labels[self.selected_path_id][next_id]
-        # # print(next_pt)
-        # distance_to_next_goal=get_distance(self.robot_pos[:2], next_pt)
-        # if distance_to_next_goal<self.T_dis:
-        #     reward+=5
-        #     self.pos_id+=3
-        # dis_reward=max(0,min(1,(1.5-distance_to_next_goal)/(self.whole_distance-1)))
-        # reward=reward+dis_reward
+        # exploration reward
+        # new_seen_area=np.sum(self.observation[1][:,:,0]==0)
+        # area_reward=(new_seen_area-self.seen_area)*0.1
+        # self.seen_area=new_seen_area
+        # current_distance=get_distance(self.robot_pos[:2], self.goal_pos[:2])
+        # if current_distance<self.whole_distance:
+        #     reward+=area_reward
+        #     self.whole_distance=current_distance
 
         # success reward
         if self.observation[self._N_RAYS]<self.T_dis:
             reward+=self._SUCCESS_REWARD 
+            # print("success")
             done=True
+        
+        next_id=min(self.pos_id+3, len(self.path_labels[self.selected_path_id])-1)
+        next_pt=self.path_labels[self.selected_path_id][next_id]
+        # print(next_pt)
+        distance=get_distance(self.robot_pos[:2], next_pt)
+        if distance<self.T_dis:
+            reward+=5
+            self.pos_id+=3
+
         # distance reward
-        # dis_diff=3/self.observation[self._N_RAYS]
-        # reward=reward+dis_diff
+        # dist_to_next_goal=self.get_next_action()[0]
+        # dis_reward=max(0,min(1,(self.whole_distance-self.observation[0][0])/(self.whole_distance-1)))
+        # reward=reward+dis_reward
 
-        info={"robot_pos":self.robot_pos}
+        info={"robot_pos":self.robot_pos,
+                "seen_area": self.seen_area,
+                }
         info.setdefault("pick", self.pick)
-
-        # print("{},robot_pos:{} goal_pos:{}".format(is_reachable, self.robot_pos[:2], self.goal_pos[:2]))
+        
         return self.observation, reward, done, info
 
     def render(self):
