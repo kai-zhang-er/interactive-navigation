@@ -473,6 +473,13 @@ def convert_imagepos_to_pos(image_pos):
     real_y=-(image_pos[1]-cy)*grid_size
     return [real_x, real_y]
 
+def convert_pos_to_imagepos2(robot_pos):
+    grid_size=0.05
+    cx, cy=235.5,154.5
+    image_x=robot_pos[0]/grid_size+cx
+    image_y=-robot_pos[1]/grid_size+cy
+    return [image_x, image_y]
+
 def get_occupancy_map_from_pos(robot_pos, global_map):
     """generate occupancy map from ray results at robot_pos
 
@@ -569,6 +576,63 @@ def render_env2(use_gui=True):
     # t=learned_forward_generator(robots[0],(-3,0,0),"left", "top")
     # print(t)
     disconnect()
+
+def get_next_explore_pos(robot_pos, global_map):
+    """search for next explore position
+
+    Args:
+        robot_pos (_type_): _description_
+        global_map (_type_): _description_
+
+    Returns:
+        _type_: seen are
+    """
+    rays_info=get_ray_info_around_point([robot_pos], ray_length=2, total_rays=60)
+    min_length=0.2
+    grid_size=0.05
+    global_center_pt=convert_pos_to_imagepos(robot_pos, global_map_shape=global_map.shape)
+    local_center_pt=[40,40]
+    # create the occupancy map
+    # 0: unknown, 1: obstacle, 2: free space
+    grid_mat=np.zeros((80,80), dtype=np.uint8) 
+
+    obs_mat=np.zeros(grid_mat.shape, dtype=np.uint8)
+    
+    for r in rays_info:
+        grid_loc=np.floor([r[2]*math.cos(r[1])/grid_size+local_center_pt[0], -r[2]*math.sin(r[1])/grid_size+local_center_pt[1]]).astype(int)
+        grid_mat=cv2.line(grid_mat,local_center_pt, grid_loc, thickness=1,color=2)
+        if r[0]>0:
+            obs_mat[grid_loc[1], grid_loc[0]]=1
+    kernel=np.ones((3,3), np.uint8)
+    grid_mat=cv2.morphologyEx(grid_mat, cv2.MORPH_CLOSE, kernel)
+
+    kernel=np.ones((7,7), np.uint8)
+    obs_mat=cv2.morphologyEx(obs_mat, cv2.MORPH_CLOSE, kernel)
+    
+    grid_mat[obs_mat==1]=1
+
+    related_region=global_map[global_center_pt[1]-40:global_center_pt[1]+40, global_center_pt[0]-40:global_center_pt[0]+40]
+    related_region[grid_mat==1]=1
+    related_region[grid_mat==2]=2
+    return related_region
+
+def explore_on_graph():
+    simid=connect(use_gui=True)
+    set_camera_pose(camera_point=[0,-5,10], target_point=[0,0,0])
+
+    with HideOutput():
+        robots, static, movable, rovers, base_limit=create_env2()
+
+    robot_pos=np.array([-7, -5, 0])
+    update_robot_base(robots[0], (robot_pos))
+    global_map=np.zeros((800,800), dtype=np.uint8)
+    
+    for step in range(1000):
+        local_map=get_occupancy_map_from_pos(robot_pos, global_map)
+        rays_info=get_ray_info_around_point([robot_pos], ray_length=2, total_rays=60)
+        
+
+
 if __name__=="__main__":
     render_env2(use_gui=False)
     # 370,130;362.3659221900789,121.6

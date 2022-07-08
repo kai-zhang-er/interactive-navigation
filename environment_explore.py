@@ -127,8 +127,8 @@ class NAMOENV(gym.Env):
         else:
             self.selected_path_id=random.randint(0, len(self.path_labels)-1)
             # self.selected_path_id=4
-            self.robot_pos[:2]=np.array(self.path_labels[self.selected_path_id][0])
-            goal_id=min(len(self.path_labels[self.selected_path_id])-1, 4)
+            self.robot_pos[:2]=np.array(self.path_labels[self.selected_path_id][3])
+            goal_id=min(len(self.path_labels[self.selected_path_id])-1, 15)
             self.goal_pos[:2]=np.array(self.path_labels[self.selected_path_id][goal_id])
             self.pos_id=0
         
@@ -154,6 +154,8 @@ class NAMOENV(gym.Env):
         if len(action)==2:   # linear and angular viteness; arm angle and arm length
             vx, va=action
             # vx=min(vx, 1.5)
+            
+            reward+=0.1*vx
             yaw_world=self.pr2_yaw+va
             offset_x=math.cos(yaw_world)*vx
             offset_y=math.sin(yaw_world)*vx
