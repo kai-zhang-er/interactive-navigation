@@ -108,7 +108,7 @@ class NAMOENV(gym.Env):
         # check collision with static or mobile obstacles
         return bool((self.observation[:-2]<self._COLLISION_THRESHOLD).any())
 
-    def reset(self, random_pt=False):
+    def reset(self, random_pt=True):
         # plt.imshow(self.global_map)
         # plt.show()
         # self.global_map=np.zeros((800,800), dtype=np.uint8)

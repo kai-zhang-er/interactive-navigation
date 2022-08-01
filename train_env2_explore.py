@@ -139,10 +139,10 @@ def train():
     # initialize a PPO agent
     ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
 
-    last_path="/home/zk/program/github/my/myplan3/PPO_preTrained/explore/PPO_explore_0_4_steps_3.pth"
-    if os.path.isfile(last_path):
-        ppo_agent.load(last_path)
-        print("load pretrained model from {}".format(last_path))
+    # last_path="/home/zk/program/github/my/myplan3/PPO_preTrained/explore/PPO_explore_0_4_steps_3.pth"
+    # if os.path.isfile(last_path):
+    #     ppo_agent.load(last_path)
+    #     print("load pretrained model from {}".format(last_path))
 
     # track total training time
     start_time = datetime.now().replace(microsecond=0)

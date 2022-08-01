@@ -21,7 +21,7 @@ class NAMOENV(gym.Env):
     """
     def __init__(self, init_pos=(-4,-1,0),
                 goal_pos=(4,1,0),
-                distance_threshold=0.3,
+                distance_threshold=1.0,
                 ray_length=2,
                 use_gui=True):
         super().__init__()
@@ -104,12 +104,15 @@ class NAMOENV(gym.Env):
         self.observation=[]
         large_map, small_map=self._get_large_small_maps(self.robot_pos)
         
-        self.observation.append(large_map)
+        self.observation=large_map
+        # self.observation.append([self.robot_pos[0], self.robot_pos[1], self.goal_pos[0], self.goal_pos[1]])
+        
         # self.seen_area=np.sum(large_map[:,:,0]==0)
 
-    def reset(self, random_pt=True):
-        # plt.imshow(self.global_map)
-        # plt.show()
+    def reset(self, random_pt=False):
+        plt.imshow(self.global_map)
+        plt.show()
+
         self.global_map=np.zeros((800,800), dtype=np.uint8)
         self.seen_area=0
 
@@ -124,7 +127,7 @@ class NAMOENV(gym.Env):
             # self.goal_pos[:2]=generate_no_collision_pose(self.base_limits)
             self.goal_pos[:2]=np.array([7,5])
         else:
-            self.selected_path_id=random.randint(0, len(self.path_labels))
+            self.selected_path_id=random.randint(0, len(self.path_labels)-1)
             self.robot_pos[:2]=np.array(self.path_labels[self.selected_path_id][0])
             self.goal_pos[:2]=np.array(self.path_labels[self.selected_path_id][-1])
             self.pos_id=0
@@ -150,7 +153,7 @@ class NAMOENV(gym.Env):
         reward=0.0
         
         va=self.ray_results_array[action, 1]
-        vx=1.5
+        vx=1.0
         
         offset_x=math.cos(va)*vx
         offset_y=math.sin(va)*vx
@@ -185,16 +188,16 @@ class NAMOENV(gym.Env):
         done=False
         self._update_observation()
         # exploration reward
-        new_seen_area=np.sum(self.observation[0][:,:,0]==0)
+        new_seen_area=np.sum(self.global_map!=0)
         area_reward=(new_seen_area-self.seen_area)*0.1
         self.seen_area=new_seen_area
         reward+=area_reward
 
         # success reward
-        if self.global_map[self.goal_image_pos[1], self.goal_image_pos[0]]!=0:
-            reward+=self._SUCCESS_REWARD 
-            print("success")
-            done=True
+        # if self.global_map[self.goal_image_pos[1], self.goal_image_pos[0]]!=0:
+        #     reward+=self._SUCCESS_REWARD 
+        #     print("success")
+        #     done=True
         # distance reward
         # dis_reward=max(0,min(1,(self.whole_distance-self.observation[0][0])/(self.whole_distance-1)))
         # reward=reward+dis_reward
@@ -316,7 +319,10 @@ class NAMOENV(gym.Env):
 if __name__=="__main__":
     env=NAMOENV(use_gui=False)
     obs=env.reset(random_pt=False)
-    for s in range(100):
-        action=env.get_next_action()
+    f=open("explore_nodes.txt","w")
+    for s in range(1000):
+        action=random.randint(0, 59)
         res=env.step(action)
-    print()
+        f.write("{},{};{},{}\r".format(env.robot_current_pos[0], env.robot_current_pos[1], env.robot_pos[0], env.robot_pos[1]))
+    env.reset()
+    f.close()
