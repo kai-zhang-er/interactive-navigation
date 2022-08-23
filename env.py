@@ -1,14 +1,13 @@
-import random
 import statistics
 from cv2 import line
 import cv2
 import numpy as np
 import pybullet as p
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import math
 from utils.pybullet_tools.pr2_primitives import Conf
 
-from utils.pybullet_tools.utils import connect, disconnect, draw_base_limits, get_angle, get_base_values, get_bodies, get_link_state, get_pose, plan_joint_motion, ray_from_pixel, wait_for_duration, \
+from utils.pybullet_tools.utils import GREEN, connect, disconnect, draw_base_limits, get_angle, get_base_values, get_bodies, get_link_state, get_pose, plan_joint_motion, ray_from_pixel, wait_for_duration, \
     wait_for_user, get_image_at_pose, LockRenderer, joint_from_name, create_box, create_cylinder, HideOutput, GREY, TAN, RED, set_point,\
     Point, BLUE, base_values_from_pose, set_camera_pose, dump_body, euler_from_quat, load_model, TURTLEBOT_URDF, \
         joints_from_names, get_joint_positions, body_collision, angle_between
@@ -62,7 +61,7 @@ def create_env(robot_confs = [(-4, -1, 0),(4,1,0)], n_robots=1, n_rovers=1,
     return robots, movable_obstacles, rovers, static_obstacles
 
 
-def create_env2(num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1):
+def create_env2(config_txt="rect.txt", num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1, with_door=False):
     #create robots
     # num_robots=1
     robots_list=[]
@@ -79,7 +78,7 @@ def create_env2(num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1):
     rect_list=[]
     zoom_ratio=20
     static_obstacles_list=[]
-    with open("rect.txt") as f:
+    with open(config_txt) as f:
         lines=f.readlines()
         center_y, center_x=lines[0].strip().split(",")
         center_x=float(center_x)/zoom_ratio
@@ -88,10 +87,11 @@ def create_env2(num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1):
             items=line.strip().split(",")
             rect_list.append([float(items[0])/zoom_ratio-center_y, float(items[1])/zoom_ratio-center_x, float(items[2])/zoom_ratio, float(items[3])/zoom_ratio])
     for rect in rect_list:
-        wall=create_box(rect[2],rect[3], 0.7, color=GREY)
+        wall=create_box(rect[2]+0.05,rect[3]+0.05, 0.5, color=GREY)
         set_point(wall, Point(rect[0], rect[1], z=0.2))
         static_obstacles_list.append(wall)
     
+        
     store_region = create_box(0.5, 0.5, 0.01, color=BLUE)
     set_point(store_region, Point(x=-3.,y=1, z=-0.1))
     static_obstacles_list.append(store_region)
@@ -107,6 +107,11 @@ def create_env2(num_robots=1, num_movable_obstacles=10, num_mobile_obstacles=1):
     for i in range(num_movable_obstacles):
         mo = create_box(.1, .1, 0.8, mass=1, color=(0, 1, 0, 1))
         movable_obstacles_list.append(mo)
+
+    if with_door:
+        door=create_box(1.4, 0.1, 0.5, color=GREEN)
+        set_point(door, Point(x=2.,y=1.75, z=0.2))  #
+        movable_obstacles_list.append(door)  #movable_obstacle_list[-1]
     
     safe_margin=0.5
     base_limit=[[-center_y+safe_margin, center_y-safe_margin], [-center_x+safe_margin, center_x-safe_margin]]
@@ -186,6 +191,9 @@ def reset_movable_obstacles(movable_obstacles):
     y=np.random.random(len(movable_obstacles))*2-2
     for i, m in enumerate(movable_obstacles):
         set_point(m, (x[i],y[i], 0))
+
+def reset_door(door, point):
+    set_point(door, (point[0], point[1], 0.2))
 
 def reset_movable_obstacles2(movable_obstacles, base_limits):
     """
@@ -456,31 +464,30 @@ def is_plan_possible(robot_id, base_goal, obstacles=[]):
         base_path = plan_joint_motion(robot_id, base_joints, base_goal, obstacles=obstacles,
                                     disabled_collisions=disabled_collisions)
     if base_path is None:
-        return False, base_path
+        return False
     else:
-        return True, base_path
-
+        return True
 
 def convert_pos_to_imagepos(robot_pos, global_map_shape):
-    robot_pos=np.array(robot_pos)
     grid_size=0.05
     global_pt=np.floor(robot_pos[:2]/grid_size).astype(int)
     global_pt=np.array(global_map_shape)//2+np.array([global_pt[0], -global_pt[1]])
     return global_pt
 
-def convert_imagepos_to_pos(image_pos):
+def convert_imagepos_to_pos_noshape(image_pos):
     grid_size=0.05
     cx, cy=235.5,154.5
     real_x=(image_pos[0]-cx)*grid_size
     real_y=-(image_pos[1]-cy)*grid_size
     return [real_x, real_y]
 
-def convert_pos_to_imagepos2(robot_pos):
+def convert_imagepos_to_pos(image_pos, global_map_shape):
     grid_size=0.05
-    cx, cy=235.5,154.5
-    image_x=robot_pos[0]/grid_size+cx
-    image_y=-robot_pos[1]/grid_size+cy
-    return [image_x, image_y]
+    cx, cy=global_map_shape[0]/2, global_map_shape[1]/2
+    real_y=(image_pos[0]-cx)*grid_size
+    real_x=-(image_pos[1]-cy)*grid_size
+    return [real_x, real_y]
+
 
 def get_occupancy_map_from_pos(robot_pos, global_map):
     """generate occupancy map from ray results at robot_pos
@@ -493,9 +500,9 @@ def get_occupancy_map_from_pos(robot_pos, global_map):
         _type_: seen are
     """
     rays_info=get_ray_info_around_point([robot_pos], ray_length=2, total_rays=60)
-    min_length=0.2
     grid_size=0.05
     global_center_pt=convert_pos_to_imagepos(robot_pos, global_map_shape=global_map.shape)
+    # print("robot_pos:{}, image_point:{}".format(robot_pos, global_center_pt))
     local_center_pt=[40,40]
     # create the occupancy map
     # 0: unknown, 1: obstacle, 2: free space
@@ -514,12 +521,13 @@ def get_occupancy_map_from_pos(robot_pos, global_map):
     kernel=np.ones((7,7), np.uint8)
     obs_mat=cv2.morphologyEx(obs_mat, cv2.MORPH_CLOSE, kernel)
     
-    grid_mat[obs_mat==1]=2
+    grid_mat[obs_mat==1]=1
 
+    # plt.imshow(grid_mat)
     related_region=global_map[global_center_pt[1]-40:global_center_pt[1]+40, global_center_pt[0]-40:global_center_pt[0]+40]
-    related_region[grid_mat==1]=1
-    related_region[grid_mat==2]=2
-    return related_region
+    related_region[grid_mat==1]=1  #obstacles
+    related_region[grid_mat==2]=2  # free space
+    return related_region, global_center_pt
 
 
 def render_env2(use_gui=True):
@@ -527,9 +535,17 @@ def render_env2(use_gui=True):
     set_camera_pose(camera_point=[0,-5,10], target_point=[0,0,0])
 
     with HideOutput():
-        robots, static, movable, rovers, base_limit=create_env2()
+        # robots, static, movable, rovers, base_limit=create_env2(config_txt="hard_rect.txt",)
+        robots, static, movable, rovers, base_limit=create_env2(config_txt="simple_env_hole.txt",with_door=True)
 
-    
+    # update_robot_base(robots[0], ((7.079945, 5.34578753,0)))
+
+    # print(convert_imagepos_to_pos_noshape(np.array([394,59])))
+    # print(convert_pos_to_imagepos(np.array(convert_imagepos_to_pos_noshape(np.array([394,59]))), (471, 309)))
+    # t=convert_pos_to_imagepos(np.array((-6,-5)), [471, 309])
+    # print(t)
+    # print(convert_imagepos_to_pos(np.array(t), [471, 309]))
+
     # print(get_base_values(robots[0]))
     # print(base_values_from_pose(get_base_pose(robots[0])))
     # images=get_front_image_from_robot(robots[0])
@@ -558,181 +574,22 @@ def render_env2(use_gui=True):
     # update_robot_base(robots[0], base_conf=(4,1,np.pi))
 
     # test from_rays_to_occupancy_map
-    robot_pos=np.array([0, 1,0])
-    update_robot_base(robots[0], (robot_pos))
-    global_map=np.zeros((800,800), dtype=np.uint8)
-    local_map=get_occupancy_map_from_pos(robot_pos, global_map)
-    pos=convert_imagepos_to_pos([114, 165])
-    robot_pos=np.array([pos[0], pos[1],0])
-    update_robot_base(robots[0], (robot_pos))
-    local_map=get_occupancy_map_from_pos(robot_pos, global_map)
+    # robot_pos=np.array([9.079945, -0.34578753,0])
+    # global_map=np.zeros((800,800), dtype=np.uint8)
+    # seen_area=get_occupancy_map_from_pos(robot_pos, global_map)
+    # robot_pos=np.array([8.079945, -0.84578753,0])
+    # small_map=get_occupancy_map_from_pos(robot_pos, global_map)
 
-    # plt.imshow(local_map)
-
-    plt.figure(2)
-    plt.imshow(global_map)
-    plt.show()
-    # wait_for_user()
+    # plt.figure(2)
+    # plt.imshow(global_map)
+    # plt.show()
+    wait_for_user()
 
     # test_manipulate_region()
     # t=learned_forward_generator(robots[0],(-3,0,0),"left", "top")
     # print(t)
     disconnect()
-
-
-def get_next_explore_pos(robot_pos, global_map):
-    """search for next explore position
-
-    Args:
-        robot_pos (_type_): _description_
-        global_map (_type_): _description_
-
-    Returns:
-        _type_: seen are
-    """
-    rays_info=get_ray_info_around_point([robot_pos], ray_length=2, total_rays=60)
-    grid_size=0.05
-    global_center_pt=convert_pos_to_imagepos(robot_pos, global_map_shape=global_map.shape)
-    local_center_pt=[40,40]
-    # create the occupancy map
-    # 0: unknown, 1: obstacle, 2: free space
-    grid_mat=np.zeros((80,80), dtype=np.uint8) 
-
-    obs_mat=np.zeros(grid_mat.shape, dtype=np.uint8)
-    
-    possible_explore_point=[]
-
-    for r in rays_info:
-        grid_loc=np.floor([r[2]*math.cos(r[1])/grid_size+local_center_pt[0], -r[2]*math.sin(r[1])/grid_size+local_center_pt[1]]).astype(int)
-        grid_mat=cv2.line(grid_mat,local_center_pt, grid_loc, thickness=1,color=2)
-        if r[0]>0:
-            obs_mat[grid_loc[1], grid_loc[0]]=1
-        elif r[0]<0:
-            l=r[2]
-            possible_explore_point.append([robot_pos[0],robot_pos[1], l*math.cos(r[1])+robot_pos[0], l*math.sin(r[1])+robot_pos[1]])
-    kernel=np.ones((3,3), np.uint8)
-    grid_mat=cv2.morphologyEx(grid_mat, cv2.MORPH_CLOSE, kernel)
-
-    kernel=np.ones((7,7), np.uint8)
-    obs_mat=cv2.morphologyEx(obs_mat, cv2.MORPH_CLOSE, kernel)
-    
-    grid_mat[obs_mat==1]=1
-
-    related_region=global_map[global_center_pt[1]-40:global_center_pt[1]+40, global_center_pt[0]-40:global_center_pt[0]+40]
-    related_region[grid_mat==1]=1
-    related_region[grid_mat==2]=2
-    return related_region, possible_explore_point
-
-
-def convert_pos_to_imagepos_array(robot_pos_array, global_map_shape):
-    grid_size=0.05
-    global_pt=np.floor(robot_pos_array/grid_size).astype(int)
-    global_pt[:,0]+=global_map_shape[0]//2
-    global_pt[:,1]=-global_pt[:,1]+global_map_shape[1]//2
-    return global_pt
-
-
-def filter_out_explored_points(unexplored_point_list, occupancy_map):
-    filtered_result=[]
-    unexplored_pt_array=np.array(unexplored_point_list)
-    image_pt_array=convert_pos_to_imagepos_array(unexplored_pt_array[:,2:4], global_map_shape=occupancy_map.shape)
-    for i, pt in enumerate(image_pt_array):
-        select_region=occupancy_map[pt[1]-6:pt[1]+6, pt[0]-6:pt[0]+6]
-        if np.sum(select_region==0)>80 and np.sum(select_region==1)<1:
-            filtered_result.append(unexplored_pt_array[i])
-    
-    return filtered_result
-
-
-def test_reachable(robot_pos, next_goal, statics):
-    robot_width=0.3  # consider the robot is a 0.6*0.6 square
-    def get_bounding_box(center_point, radius):
-        bounding_box=[]
-        bounding_box.append([center_point[0]-radius, center_point[1]-radius, 0.1])
-        bounding_box.append([center_point[0]-radius, center_point[1]+radius, 0.1])
-        bounding_box.append([center_point[0]+radius, center_point[1]-radius, 0.1])
-        bounding_box.append([center_point[0]+radius, center_point[1]+radius, 0.1])
-
-        bounding_box.append([center_point[0]+radius, center_point[1], 0.1])
-        bounding_box.append([center_point[0]-radius, center_point[1], 0.1])
-        bounding_box.append([center_point[0], center_point[1]+radius, 0.1])
-        bounding_box.append([center_point[0], center_point[1]-radius, 0.1])
-
-        bounding_box.append([center_point[0], center_point[1], 0.1])
-        return bounding_box
-    starting_points=get_bounding_box(robot_pos, robot_width)
-    starting_points_array=np.array(starting_points)
-    goal_points=get_bounding_box(next_goal, robot_width)
-    goal_points_array=np.array(goal_points)
-    ray_results=p.rayTestBatch(starting_points_array, goal_points_array)
-    is_reachable=True
-    for ray in ray_results:
-        if ray[0] in statics:
-            is_reachable=False
-            break
-        
-    return is_reachable
-
-
-def explore_on_graph():
-    simid=connect(use_gui=False)
-    set_camera_pose(camera_point=[0,-5,10], target_point=[0,0,0])
-
-    with HideOutput():
-        robots, static, movable, rovers, base_limit=create_env2()
-
-    robot_pos=np.array([-7, -5, 0])
-    update_robot_base(robots[0], (robot_pos))
-    global_map=np.zeros((800,800), dtype=np.uint8)
-    
-    unexplored_point_list=[]
-
-    f=open("explore_nodes.txt","w")
-    for step in range(2000):
-        local_map, possible_explore_points=get_next_explore_pos(robot_pos, global_map)
-        unexplored_point_list.extend(possible_explore_points)
-        filtered_point_list=filter_out_explored_points(unexplored_point_list, global_map)
-        print("step {}: before filter {}, after {}".format(step,len(unexplored_point_list),len(filtered_point_list)))
-        
-        if len(filtered_point_list)<1:
-            print("no left unexplored points")
-            break
-
-        for t in range(10):
-            if len(filtered_point_list)<1:
-                # print("no left unexplored points")
-                break
-            next_point_ind=random.randint(0,len(filtered_point_list)-1)
-            next_point=filtered_point_list.pop(next_point_ind)
-            unexplored_point_list=filtered_point_list
-            # next_point=filtered_point_list[-1]
-            robot_pos[0]=next_point[0]
-            robot_pos[1]=next_point[1]
-            is_reachable=True
-            is_reachable=test_reachable(robot_pos, [next_point[2], next_point[3]], static)
-            if is_reachable:  # update next goal
-                robot_pos[0]=next_point[2]
-                robot_pos[1]=next_point[3]
-                update_robot_base(robots[0], (robot_pos))
-                f.write("{},{};{},{}\r".format(next_point[0], next_point[1], next_point[2], next_point[3]))        
-                break  
-        
-        current_img_pos=convert_pos_to_imagepos(robot_pos, global_map_shape=global_map.shape)
-        print(next_point_ind, current_img_pos)
-        cv2.circle(global_map,current_img_pos, 5, 0)
-        cv2.imshow("map", global_map*125)
-        cv2.waitKey(1)
-    plt.imshow(global_map)
-    plt.show(block=False)
-
-    f.close()
-    disconnect()
-
-
 if __name__=="__main__":
-    # render_env2(use_gui=False)
-    # 370,130;362.3659221900789,121.6
-    # print(convert_imagepos_to_pos([370, 130]))
-    # print(convert_imagepos_to_pos([362.3, 121.6]))
-    explore_on_graph()
+    render_env2(use_gui=True)
+    # print(convert_pos_to_imagepos())
     
