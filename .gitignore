@@ -151,6 +151,7 @@ py38/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+.pickle
 
 # Pyre type checker
 .pyre/
@@ -162,7 +163,9 @@ dmypy.json
 cython_debug/
 
 # third library
-utils/
+utils/models
+utils/__pycache__
+utils/problems/
 tensorboard/
 models/
 logs/
